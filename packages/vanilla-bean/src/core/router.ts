@@ -225,12 +225,26 @@ export function setStaticData(data: Record<string, unknown>): void {
   staticData = data || {};
 }
 export async function preloadAll(): Promise<void> {
-  for (const path in routes) await loadChain(path);
-  for (const r of dynamicRoutes) {
-    await Promise.all([r.loader(), ...layoutLoadersForFile(r.file).map((l) => l())]);
+  const loaders = new Set<Loader>();
+  const add = (loader: Loader | null | undefined): void => {
+    if (loader) loaders.add(loader);
+  };
+
+  for (const path in routes) {
+    const file = routeFile[path]!;
+    for (const loader of layoutLoadersForFile(file)) add(loader);
+    add(routes[path]);
+    const errDir = nearestDir(errorDirs, path);
+    add(errDir ? errorDirs[errDir] : null);
   }
-  for (const dir in notFoundDirs) await notFoundDirs[dir]!();
-  for (const dir in errorDirs) await errorDirs[dir]!();
+  for (const r of dynamicRoutes) {
+    add(r.loader);
+    for (const loader of layoutLoadersForFile(r.file)) add(loader);
+  }
+  for (const dir in notFoundDirs) add(notFoundDirs[dir]);
+  for (const dir in errorDirs) add(errorDirs[dir]);
+
+  await Promise.all([...loaders].map((loader) => loader()));
 }
 export async function collectStatics(): Promise<Record<string, unknown>> {
   for (const [key, fn] of staticRegistry) {

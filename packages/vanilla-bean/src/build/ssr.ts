@@ -14,7 +14,7 @@ export async function renderRouteToHTML(
   fw: any,
   template: string,
   route: string,
-  { keepBody = true }: { keepBody?: boolean } = {},
+  { keepBody = true, origin = "http://localhost" }: { keepBody?: boolean; origin?: string } = {},
 ): Promise<string> {
   const saved: Record<string, unknown> = {};
   const g = globalThis as any;
@@ -22,7 +22,7 @@ export async function renderRouteToHTML(
   const { document, Node } = parseHTML(template);
   swap("document", document);
   swap("Node", Node);
-  swap("location", new URL("http://localhost" + route));
+  swap("location", new URL(route, origin));
   swap("history", { pushState() {}, replaceState() {} });
   swap("fetch", () => new Promise(() => {}));
   swap("setInterval", () => 0);

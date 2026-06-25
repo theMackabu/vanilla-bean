@@ -54,7 +54,7 @@ export function devPlugin(ctx: Ctx): any {
     configureServer(server: any) {
       logRequests(server);
       server.middlewares.use(async (req: any, res: any, next: any) => {
-        const url = new URL(req.url, "http://localhost");
+        const url = new URL(req.url, "http://" + (req.headers.host || "localhost"));
         if (!url.pathname.startsWith("/api/")) return next();
         try {
           const { handleApi } = await server.ssrLoadModule(ctx.apiRoutesPath);
@@ -81,7 +81,8 @@ export function devPlugin(ctx: Ctx): any {
           const fw = await server.ssrLoadModule("vanilla-bean");
           if (devTemplate === null)
             devTemplate = await resolveStatics(fw, buildShell(ctx.meta, { entry: ctx.devEntry }));
-          const html = await renderRouteToHTML(fw, devTemplate, url, { keepBody: false });
+          const origin = "http://" + (req.headers.host || "localhost");
+          const html = await renderRouteToHTML(fw, devTemplate, url, { keepBody: false, origin });
           res.statusCode = 200;
           res.setHeader("Content-Type", "text/html");
           res.end(await server.transformIndexHtml(url, html));

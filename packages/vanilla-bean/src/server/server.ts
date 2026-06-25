@@ -87,15 +87,14 @@ function settleCapped(tracker: Set<Promise<unknown>>): Promise<boolean> {
 const enc = new TextEncoder();
 const NAV_MIME = "application/vnd.vanilla-bean.nav+json";
 
-function renderStream(key: string, status: number): ReadableStream {
-  return new ReadableStream({
-    start: (controller) => withLock(() => streamRoute(key, status, controller)),
-  });
+function renderStream(key: string, status: number, origin: string): ReadableStream {
+  return new ReadableStream({ start: (controller) => withLock(() => streamRoute(key, status, origin, controller)) });
 }
 
 async function streamRoute(
   key: string,
   status: number,
+  origin: string,
   controller: ReadableStreamDefaultController<Uint8Array>,
 ): Promise<void> {
   const send = (s: string) => controller.enqueue(enc.encode(s));
@@ -108,7 +107,7 @@ async function streamRoute(
   }
 
   const { document, Node } = parseHTML(template);
-  const url = new URL("http://localhost" + key);
+  const url = new URL(key, origin);
   const restore = enterRenderGlobals(document as unknown as Document, Node, url);
   const tracker = trackAsync();
   try {
@@ -143,10 +142,10 @@ async function streamRoute(
   }
 }
 
-function renderNav(key: string): Promise<{ status: number; islands: Record<string, string> }> {
+function renderNav(key: string, origin: string): Promise<{ status: number; islands: Record<string, string> }> {
   return withLock(async () => {
     const { document, Node } = parseHTML(template);
-    const url = new URL("http://localhost" + key);
+    const url = new URL(key, origin);
     const restore = enterRenderGlobals(document as unknown as Document, Node, url);
     const tracker = trackAsync();
     try {
@@ -280,7 +279,7 @@ app.get("*", async ({ request }: any) => {
   const key = url.pathname + url.search;
 
   if ((request.headers.get("accept") || "").includes(NAV_MIME)) {
-    const payload = await renderNav(key);
+    const payload = await renderNav(key, url.origin);
     return new Response(JSON.stringify(payload), {
       status: payload.status,
       headers: { "content-type": NAV_MIME },
@@ -302,7 +301,7 @@ app.get("*", async ({ request }: any) => {
     return new Response(body as unknown as BodyInit, { status: hit.status, headers });
   }
   const status = matchRoute(url.pathname) ? 200 : 404;
-  return new Response(renderStream(key, status), { status, headers: HTML_HEADERS });
+  return new Response(renderStream(key, status, url.origin), { status, headers: HTML_HEADERS });
 });
 
 function fetch(request: Request, env: any): Response | Promise<Response> {

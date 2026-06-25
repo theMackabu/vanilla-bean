@@ -9,6 +9,7 @@ export type Component = {
   fallback?: (p: Props) => unknown;
 };
 
+const EMPTY_PROPS: Props = {};
 type Thunk = { (): unknown; dyn?: boolean };
 
 const isEventProp = (key: string): boolean => /^on[A-Z]/.test(key);
@@ -88,13 +89,20 @@ export function buildFresh<T>(fn: () => T): T {
 export function h(tag: string | Component, props: Props | null, ...children: unknown[]): any {
   if (typeof tag === "function") {
     const mode = tag.__mode;
-    const p: Props = props || {};
-    p.children = children.length <= 1 ? children[0] : children;
+    const child = children.length <= 1 ? children[0] : children;
+
+    const p: Props = props
+      ? ((props.children = child), props)
+      : child === undefined
+        ? EMPTY_PROPS
+        : { children: child };
+
+    const call = () => tag(p);
 
     if (hydrating && (mode === "static" || mode === "server" || mode === "client")) {
       const slot = claim("island");
-      if (mode === "static" || mode === "server") return slot || buildFresh(() => tag(p));
-      const real = buildFresh(() => tag(p));
+      if (mode === "static" || mode === "server") return slot || buildFresh(call);
+      const real = buildFresh(call);
       if (slot) (slot as Element).replaceWith(real as Node);
       return real;
     }
@@ -113,7 +121,7 @@ export function h(tag: string | Component, props: Props | null, ...children: unk
 
     if (import.meta.env?.SSR && mode === "server") {
       const w = islandWrapper("server", tag.__key);
-      const out: unknown = tag(p);
+      const out: unknown = call();
       if (out && typeof (out as Promise<unknown>).then === "function") {
         w.setAttribute("data-fb", "");
         trackServer(
@@ -128,7 +136,7 @@ export function h(tag: string | Component, props: Props | null, ...children: unk
       return w;
     }
 
-    const node = tag(p);
+    const node = call();
     if (import.meta.env?.SSR && mode === "static") {
       const w = islandWrapper("static", tag.__key);
       appendChild(w, node);
@@ -141,14 +149,12 @@ export function h(tag: string | Component, props: Props | null, ...children: unk
   const el = (found as HTMLElement) || document.createElement(tag);
   const parentNext = cursor;
 
-  for (const key in props || {}) {
-    const value = (props as Props)[key];
-    if (isEventProp(key)) {
-      el.addEventListener(key.slice(2).toLowerCase(), value);
-    } else if (typeof value === "function") {
-      effect(() => setProp(el, key, value()));
-    } else if (!found) {
-      setProp(el, key, value);
+  if (props) {
+    for (const key in props) {
+      const value = props[key];
+      if (isEventProp(key)) el.addEventListener(key.slice(2).toLowerCase(), value);
+      else if (typeof value === "function") effect(() => setProp(el, key, value()));
+      else if (!found) setProp(el, key, value);
     }
   }
 

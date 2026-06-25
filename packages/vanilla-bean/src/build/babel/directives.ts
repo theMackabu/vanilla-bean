@@ -88,15 +88,7 @@ export default function directives({ types: t }: any, opts: any = {}): any {
     t.isArrowFunctionExpression(n)
       ? t.arrowFunctionExpression(n.params, n.body, n.async)
       : t.functionExpression(n.id || null, n.params, n.body, n.generator, n.async);
-  const containsJSX = (p: any): boolean => {
-    let found = false;
-    p.traverse({
-      "JSXElement|JSXFragment"() {
-        found = true;
-      },
-    });
-    return found;
-  };
+  const containsJSX = (p: any): boolean => !!p.node.__containsJSX;
 
   const wrappedByDirective = (p: any) =>
     p.parentPath?.isCallExpression?.() &&
@@ -162,9 +154,16 @@ export default function directives({ types: t }: any, opts: any = {}): any {
             ]);
         },
       },
-      FunctionDeclaration: handleFn,
-      FunctionExpression: handleFn,
-      ArrowFunctionExpression: handleFn,
+      "JSXElement|JSXFragment"(p: any) {
+        let fn = p.getFunctionParent();
+        while (fn) {
+          fn.node.__containsJSX = true;
+          fn = fn.parentPath?.getFunctionParent?.();
+        }
+      },
+      FunctionDeclaration: { exit: handleFn },
+      FunctionExpression: { exit: handleFn },
+      ArrowFunctionExpression: { exit: handleFn },
       ExportDefaultDeclaration: {
         exit(p: any, state: any) {
           if (!state.fileMode) return;

@@ -19,7 +19,7 @@ import {
   trackAsync,
   settle,
   untrackAsync,
-} from "../index.ts";
+} from "vanilla-bean";
 
 const RENDER_TIMEOUT = Number(process.env.RENDER_TIMEOUT) || 5000;
 

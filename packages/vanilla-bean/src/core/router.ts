@@ -1,4 +1,4 @@
-import { h, collectAdopt, clearHead, flushHead, withCursor, type Component } from "./dom.ts";
+import { h, collectAdopt, clearHead, flushHead, setServerIslandContent, withCursor, type Component } from "./dom.ts";
 import { ErrorBoundary } from "./suspense.ts";
 import { makeSignal } from "./reactive.ts";
 
@@ -34,6 +34,7 @@ type Chain = {
   ErrorComp: Component | null;
   notFound: boolean;
   serverRoute: boolean;
+  serverStart: number | null;
   cache: boolean;
 };
 
@@ -181,7 +182,9 @@ async function loadChain(path: string): Promise<Chain> {
     load(errDir ? errorDirs[errDir]! : null),
   ]);
 
-  const serverRoute = [pageMod, ...layoutMods].some((mm) => mm && mm.__serverRoute);
+  const serverMods = [...layoutMods, pageMod];
+  const serverStart = serverMods.findIndex((mm) => mm && mm.__serverRoute);
+  const serverRoute = serverStart !== -1;
   const routeMods = [pageMod, ...layoutMods].filter(Boolean);
 
   const nonSsr = routeMods.every((mm) => mm.default?.__mode === "client" || mm.default?.__mode === "static");
@@ -193,6 +196,7 @@ async function loadChain(path: string): Promise<Chain> {
     ErrorComp: errMod ? errMod.default : null,
     notFound: !known,
     serverRoute,
+    serverStart: serverRoute ? serverStart : null,
     cache,
   };
 }
@@ -314,20 +318,56 @@ function onLinkClick(e: MouseEvent): void {
 async function go(href: string, push: boolean): Promise<void> {
   const url = new URL(href, location.href);
   const chain = await loadChain(url.pathname);
+  let serverIslands: Map<string, string> | null = null;
+
   if (booted && chain.serverRoute) {
-    location.href = url.pathname + url.search + url.hash;
-    return;
+    try {
+      serverIslands = await fetchServerIslands(url);
+    } catch {
+      location.href = url.pathname + url.search + url.hash;
+      return;
+    }
   }
+
   const apply = () => {
-    if (push) history.pushState({}, "", url.pathname + url.search + url.hash);
-    loc(snapshot());
-    clearHead();
-    if (!booted) hydrateBoot(chain, url.pathname);
-    else swap(chain, url.pathname);
-    flushHead();
+    if (serverIslands) setServerIslandContent(serverIslands);
+    try {
+      if (push) history.pushState({}, "", url.pathname + url.search + url.hash);
+      loc(snapshot());
+      clearHead();
+      if (!booted) hydrateBoot(chain, url.pathname);
+      else swap(chain, url.pathname);
+      flushHead();
+    } finally {
+      if (serverIslands) setServerIslandContent(null);
+    }
   };
+
   if (options.transitions && (document as any).startViewTransition) (document as any).startViewTransition(apply);
   else apply();
+}
+
+async function fetchServerIslands(url: URL): Promise<Map<string, string>> {
+  const res = await fetch(url.pathname + url.search, { headers: { accept: "text/html" } });
+  const html = await res.text();
+  const doc = new DOMParser().parseFromString(html, "text/html");
+
+  for (const tpl of [...doc.querySelectorAll<HTMLTemplateElement>("template[data-vb-fill]")]) {
+    const id = tpl.getAttribute("data-vb-fill");
+    if (!id) continue;
+    const slot = doc.querySelector(`[data-vb="${id}"]`);
+    if (!slot) continue;
+    slot.replaceChildren(tpl.content.cloneNode(true));
+    slot.removeAttribute("data-fb");
+    tpl.remove();
+  }
+
+  const out = new Map<string, string>();
+  for (const island of [...doc.querySelectorAll<HTMLElement>('island[data-mode="server"][data-key]')]) {
+    out.set(island.getAttribute("data-key")!, island.innerHTML);
+  }
+
+  return out;
 }
 
 export function navigate(href: string, { replace = false }: { replace?: boolean } = {}): void {
@@ -376,7 +416,9 @@ function hydrateBoot(chain: Chain, path: string): void {
 function swap(chain: Chain, path: string): void {
   const { layouts } = chain;
   let k = 0;
+
   while (k < mounted.length && k < layouts.length && mounted[k]!.Comp === layouts[k]) k++;
+  if (chain.serverStart != null) k = Math.min(k, chain.serverStart);
   mounted = mounted.slice(0, k);
 
   const parentOutlet = k === 0 ? rootEl! : mounted[k - 1]!.outlet;

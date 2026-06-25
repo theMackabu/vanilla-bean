@@ -10,6 +10,12 @@ export type Component = {
 };
 
 const EMPTY_PROPS: Props = {};
+let serverIslandContent = new Map<string, string>();
+
+export function setServerIslandContent(content: Map<string, string> | null): void {
+  serverIslandContent = content || new Map();
+}
+
 type Thunk = { (): unknown; dyn?: boolean };
 
 const isEventProp = (key: string): boolean => /^on[A-Z]/.test(key);
@@ -111,6 +117,13 @@ export function h(tag: string | Component, props: Props | null, ...children: unk
       const n = adoptMap.get(tag.__key)!;
       adoptMap.delete(tag.__key);
       return n;
+    }
+
+    if (!import.meta.env?.SSR && mode === "server") {
+      const w = islandWrapper("server", tag.__key);
+      const html = tag.__key ? serverIslandContent.get(tag.__key) : null;
+      if (html != null) w.innerHTML = html;
+      return w;
     }
 
     if (import.meta.env?.SSR && mode === "client") {

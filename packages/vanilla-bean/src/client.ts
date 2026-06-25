@@ -1,4 +1,4 @@
-import { start } from "./index.ts";
+import { start } from "vanilla-bean";
 import config from "virtual:framework-config";
 
 start(config);

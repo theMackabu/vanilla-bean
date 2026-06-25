@@ -1,8 +1,8 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { runtimeConfigPlugin, configPlugin } from "./config.ts";
 import { jsxPlugin } from "./jsx.ts";
 import { devPlugin } from "./serve.ts";
+import { runtimeConfigPlugin, configPlugin } from "./config.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -20,16 +20,25 @@ export type Ctx = {
 
 export default function framework(userSite: any = {}, opts: any = {}): any[] {
   const ssrBuild = !!opts.ssrBuild;
-  const entryFile = path.join(here, "../../client.ts");
+  const entryFile = path.join(here, "client.js");
+
   const ctx: Ctx = {
-    meta: { lang: "en", title: "app", description: "", ...(userSite.meta || {}) },
     ssrBuild,
+    entryFile,
+
+    meta: {
+      lang: "en",
+      title: "app",
+      description: "",
+      ...(userSite.meta || {}),
+    },
+
     runtime: { transitions: !!userSite.transitions },
     CONFIG_ID: "virtual:framework-config",
-    entryFile,
-    serverEntry: path.join(here, "../../server/server.ts"),
-    indexPath: path.join(here, "../../index.ts"),
-    apiRoutesPath: path.join(here, "../../server/api-routes.ts"),
+
+    serverEntry: path.join(here, "server.js"),
+    indexPath: path.join(here, "index.js"),
+    apiRoutesPath: path.join(here, "api-routes.js"),
     devEntry: "/" + path.relative(process.cwd(), entryFile).split(path.sep).join("/"),
   };
 

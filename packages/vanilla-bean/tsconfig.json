@@ -3,8 +3,13 @@
     "target": "es2022",
     "module": "nodenext",
     "moduleResolution": "nodenext",
+    "rootDir": "src",
     "lib": ["es2023", "dom", "dom.iterable"],
     "types": ["node"],
+    "ignoreDeprecations": "6.0",
+    "paths": {
+      "vanilla-bean": ["./src/index.ts"]
+    },
     "strict": true,
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,

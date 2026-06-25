@@ -1,4 +1,4 @@
-import { h, collectAdopt, clearHead, flushHead, withCursor, type Component } from "./dom.ts";
+import { h, claim, collectAdopt, clearHead, flushHead, withCursor, type Component } from "./dom.ts";
 import { ErrorBoundary } from "./suspense.ts";
 import { makeSignal, createOwner, runWithOwner, dispose, type Owner } from "./reactive.ts";
 
@@ -269,10 +269,8 @@ export async function collectStatics(): Promise<Record<string, unknown>> {
 let rootEl: HTMLElement | null = null;
 let mounted: { Comp: Component; outlet: HTMLElement; owner: Owner }[] = [];
 
-let bootOwner: Owner | null = null;
-let pageOwner: Owner | null = null;
-
 let booted = false;
+let pageOwner: Owner | null = null;
 let options: { transitions?: boolean } = { transitions: false };
 
 export function start(config: Record<string, unknown> = {}): void {
@@ -394,16 +392,40 @@ function patchParams(mutate: (sp: URLSearchParams) => void, replace: boolean): v
   delete: (key: string, { replace = true }: { replace?: boolean } = {}) => patchParams((sp) => sp.delete(key), replace),
 };
 
+function createOutlet(): HTMLElement {
+  const d = document.createElement("div");
+  d.style.display = "contents";
+  return d;
+}
+
+function buildLayered(chain: Chain, path: string, reset: () => void): Node {
+  mounted = [];
+  const build = (i: number): Node => {
+    if (i >= chain.layouts.length) {
+      pageOwner = createOwner();
+      return runWithOwner(pageOwner, () => buildPage(chain, { ...loc() }, path, reset));
+    }
+    const owner = createOwner();
+    let outlet!: HTMLElement;
+    const slot = () => {
+      outlet = (claim("div") as HTMLElement | null) ?? createOutlet();
+      withCursor(outlet.firstChild, () => {
+        const inner = build(i + 1);
+        if (inner instanceof Node && inner.parentNode !== outlet) outlet.appendChild(inner);
+      });
+      return outlet;
+    };
+    const node = runWithOwner(owner, () => h(chain.layouts[i]!, null, slot)) as Node;
+    mounted.push({ Comp: chain.layouts[i]!, outlet, owner });
+    return node;
+  };
+  return build(0);
+}
+
 function hydrateBoot(chain: Chain, path: string): void {
   booted = true;
   const reset = () => go(location.pathname + location.search + location.hash, false);
-  const build = (i: number): unknown =>
-    i < chain.layouts.length
-      ? h(chain.layouts[i]!, null, () => build(i + 1))
-      : buildPage(chain, { ...loc() }, path, reset);
-  bootOwner = createOwner();
-  runWithOwner(bootOwner, () => withCursor(rootEl!.firstChild, () => build(0)));
-  mounted = [];
+  withCursor(rootEl!.firstChild, () => buildLayered(chain, path, reset));
 }
 
 function swap(chain: Chain, path: string): void {
@@ -412,11 +434,6 @@ function swap(chain: Chain, path: string): void {
 
   while (k < mounted.length && k < layouts.length && mounted[k]!.Comp === layouts[k]) k++;
   if (chain.serverStart != null) k = Math.min(k, chain.serverStart);
-
-  if (bootOwner) {
-    dispose(bootOwner);
-    bootOwner = null;
-  }
 
   dispose(pageOwner);
   pageOwner = null;
@@ -448,8 +465,7 @@ export async function renderRouteToDocument(path: string): Promise<{ cache: bool
   clearHead();
   const chain = await loadChain(path);
   loc = makeSignal<Loc>(snapshot());
-  const node = buildPage(chain, { ...loc() }, path, () => {});
-  const tree = chain.layouts.reduceRight((child: any, Layout) => h(Layout, null, child), node as any);
+  const tree = buildLayered(chain, path, () => {});
   document.getElementById("root")!.replaceChildren(tree);
   flushHead();
   return { cache: chain.cache };

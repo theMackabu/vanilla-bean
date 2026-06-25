@@ -2,6 +2,7 @@ type Effect = {
   deps: Set<Set<Effect>>;
   children: Set<Effect>;
   disposed: boolean;
+  schedule?(): void;
   execute(): unknown;
 };
 
@@ -33,6 +34,12 @@ function flushEffects(): void {
     flushQueued = true;
     queueMicrotask(flushEffects);
   }
+}
+
+function notifyEffect(eff: Effect): void {
+  if (eff.disposed) return;
+  if (eff.schedule) eff.schedule();
+  else scheduleEffect(eff);
 }
 
 function currentEffect(): Effect | undefined {
@@ -67,7 +74,7 @@ export function makeSignal<T>(initial?: T): Signal<T> {
     value = next;
     const active = currentEffect();
     for (const eff of subscribers) {
-      if (eff !== active) scheduleEffect(eff);
+      if (eff !== active) notifyEffect(eff);
     }
   };
 
@@ -174,9 +181,49 @@ export function disposeChildren(eff: Effect | null | undefined): void {
 }
 
 export function derived<T>(fn: () => T): () => T {
-  const out = makeSignal<T>();
-  effect(() => out(fn()));
-  return () => out() as T;
+  let value: T;
+  let dirty = true;
+  const subscribers = new Set<Effect>();
+  const parent = currentEffect();
+  const computed: Effect = {
+    deps: new Set(),
+    children: new Set(),
+    disposed: false,
+    schedule() {
+      if (computed.disposed || dirty) return;
+      dirty = true;
+      const active = currentEffect();
+      for (const eff of subscribers) {
+        if (eff !== active) notifyEffect(eff);
+      }
+    },
+    execute() {
+      computed.schedule?.();
+    },
+  };
+
+  if (parent) parent.children.add(computed);
+
+  const recompute = (): T => {
+    cleanup(computed);
+    effectStack.push(computed);
+    try {
+      value = fn();
+      dirty = false;
+      return value;
+    } finally {
+      effectStack.pop();
+    }
+  };
+
+  return () => {
+    const eff = currentEffect();
+    if (eff) {
+      subscribers.add(eff);
+      eff.deps.add(subscribers);
+    }
+    return dirty ? recompute() : value;
+  };
 }
 
 export type { Effect };

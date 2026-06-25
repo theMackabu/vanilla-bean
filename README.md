@@ -180,6 +180,17 @@ async function Origin() {
 
 > An `async` component **must** be `"use server"`, a client can't render an async component (it returns a Promise, not a node), so the build rejects it.
 
+The same directives work as the **first line of a page file**, applying to the whole page — `"use static"` prerenders it at build, `"use client"` makes it client-only, `"use server"` server-renders it:
+
+```jsx
+"use server"; // the whole page renders on the server; named exports become actions
+
+export default async function Page() {
+  const data = await db.query(/* … */);
+  return <pre>{JSON.stringify(data)}</pre>;
+}
+```
+
 ## Server actions
 
 A file that starts with `"use server"` turns its exports into server functions you can call from the client. The body never ships to the browser, module state lives on the server:

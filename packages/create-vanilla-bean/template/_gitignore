@@ -1,0 +1,4 @@
+node_modules
+.vanilla
+dist
+.DS_Store

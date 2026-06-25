@@ -1,12 +1,12 @@
-import { signal, effect, withBoundary, type Boundary } from "./reactive.ts";
+import { makeSignal, effect, withBoundary, type Boundary } from "./reactive.ts";
 import { claim, withCursor, buildFresh, type Props } from "./dom.ts";
 
 type Render = () => unknown;
 
 export function Suspense(props: Props): HTMLElement {
   const render = asFn(props.children);
-  const pending = signal(0);
-  const error = signal<unknown>(null);
+  const pending = makeSignal(0);
+  const error = makeSignal<unknown>(null);
   const container = box();
 
   let content: Node[];
@@ -37,7 +37,7 @@ export function Suspense(props: Props): HTMLElement {
 
 export function ErrorBoundary(props: Props): HTMLElement {
   const render = asFn(props.children);
-  const error = signal<unknown>(null);
+  const error = makeSignal<unknown>(null);
   const container = box();
   const [content, hydrated] = buildContent(container, { fail: (e) => error(e) }, render, error);
 

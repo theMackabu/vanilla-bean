@@ -1,6 +1,6 @@
 import { h, collectAdopt, clearHead, flushHead, withCursor, type Component } from "./dom.ts";
 import { ErrorBoundary } from "./suspense.ts";
-import { signal } from "./reactive.ts";
+import { makeSignal } from "./reactive.ts";
 
 type Loader = () => Promise<any>;
 
@@ -36,12 +36,12 @@ type Chain = {
   serverRoute: boolean;
 };
 
-const pageModules = import.meta.glob("/src/pages/**/*.jsx");
-const layoutModules = import.meta.glob("/src/**/layout.jsx");
-const notFoundModules = import.meta.glob("/src/**/not-found.jsx");
-const errorModules = import.meta.glob("/src/**/error-page.jsx");
+const pageModules = import.meta.glob("/src/pages/**/*.{jsx,tsx}");
+const layoutModules = import.meta.glob("/src/**/layout.{jsx,tsx}");
+const notFoundModules = import.meta.glob("/src/**/not-found.{jsx,tsx}");
+const errorModules = import.meta.glob("/src/**/error-page.{jsx,tsx}");
 
-const SPECIAL = /\/(layout|not-found|error-page)\.jsx$/;
+const SPECIAL = /\/(layout|not-found|error-page)\.[jt]sx$/;
 const SCORE: Record<string, number> = { static: 3, dynamic: 2, catch: 1, optcatch: 0 };
 
 export const routes: Record<string, Loader> = {};
@@ -51,7 +51,7 @@ const dynamicRoutes: DynamicRoute[] = [];
 function parsePattern(file: string): Part[] {
   const rel = file
     .replace(/^\/src\/pages/, "")
-    .replace(/\.jsx$/, "")
+    .replace(/\.[jt]sx$/, "")
     .replace(/\/index$/, "");
   return rel
     .split("/")
@@ -91,14 +91,14 @@ const dirMap = (modules: Record<string, Loader>, suffix: RegExp): Record<string,
   for (const file in modules) out[file.replace(suffix, "")] = modules[file]!;
   return out;
 };
-const layoutDirs = dirMap(layoutModules, /\/layout\.jsx$/);
-const notFoundDirs = dirMap(notFoundModules, /\/not-found\.jsx$/);
-const errorDirs = dirMap(errorModules, /\/error-page\.jsx$/);
+const layoutDirs = dirMap(layoutModules, /\/layout\.[jt]sx$/);
+const notFoundDirs = dirMap(notFoundModules, /\/not-found\.[jt]sx$/);
+const errorDirs = dirMap(errorModules, /\/error-page\.[jt]sx$/);
 
 function fileToPath(file: string): string {
   const p = file
     .replace(/^\/src\/pages/, "")
-    .replace(/\.jsx$/, "")
+    .replace(/\.[jt]sx$/, "")
     .replace(/\/index$/, "");
   return p === "" ? "/" : p;
 }
@@ -209,7 +209,7 @@ function snapshot(): Loc {
   };
 }
 
-let loc = signal<Loc>(snapshot());
+let loc = makeSignal<Loc>(snapshot());
 export function useLocation(): Loc {
   return loc();
 }
@@ -378,7 +378,7 @@ function swap(chain: Chain, path: string): void {
 export async function renderRouteToDocument(path: string): Promise<void> {
   clearHead();
   const chain = await loadChain(path);
-  loc = signal<Loc>(snapshot());
+  loc = makeSignal<Loc>(snapshot());
   const node = buildPage(chain, { ...loc() }, path, () => {});
   const tree = chain.layouts.reduceRight((child: any, Layout) => h(Layout, null, child), node as any);
   document.getElementById("root")!.replaceChildren(tree);

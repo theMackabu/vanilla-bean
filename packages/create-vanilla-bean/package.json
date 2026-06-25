@@ -1,0 +1,17 @@
+{
+  "name": "create-vanilla-bean",
+  "version": "0.0.1-rc.9",
+  "type": "module",
+  "description": "Scaffold a new vanilla bean app.",
+  "license": "MIT",
+  "bin": {
+    "create-vanilla-bean": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "template"
+  ],
+  "dependencies": {
+    "@clack/prompts": "^1.6.0"
+  }
+}

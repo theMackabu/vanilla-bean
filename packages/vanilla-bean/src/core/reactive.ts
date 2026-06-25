@@ -21,9 +21,7 @@ export type Signal<T> = {
   (next: T): void;
 };
 
-export function signal<T>(initial: T): Signal<T>;
-export function signal<T = undefined>(): Signal<T | undefined>;
-export function signal<T>(initial?: T): Signal<T> {
+export function makeSignal<T>(initial?: T): Signal<T> {
   let value = initial as T;
   const subscribers = new Set<Effect>();
 
@@ -46,6 +44,16 @@ export function signal<T>(initial?: T): Signal<T> {
 
   const fn = (...args: [] | [T]): T | void => (args.length === 0 ? read() : write(args[0] as T));
   return fn as Signal<T>;
+}
+
+// The compiler rewrites a signal's reads and writes into get/set calls, so to the
+// author it behaves like a plain value. Type it as that value (not Signal<T>) so the
+// sugar — `count`, `count++`, `count = x` — type-checks. makeSignal is the real
+// callable for code that opts out of the sugar (internals, escape hatch).
+export function signal<T>(initial: T): T;
+export function signal<T = undefined>(): T | undefined;
+export function signal(initial?: any): any {
+  return makeSignal(initial);
 }
 
 export type Boundary = {
@@ -140,7 +148,7 @@ export function disposeChildren(eff: Effect | null | undefined): void {
 }
 
 export function derived<T>(fn: () => T): () => T {
-  const out = signal<T>();
+  const out = makeSignal<T>();
   effect(() => out(fn()));
   return () => out() as T;
 }

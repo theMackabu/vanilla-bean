@@ -1,0 +1,14 @@
+{
+  "name": "app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vanilla-bean dev",
+    "build": "vanilla-bean build",
+    "preview": "vanilla-bean preview",
+    "start": "vanilla-bean start"
+  },
+  "dependencies": {
+    "vanilla-bean": "latest"
+  }
+}

@@ -2,8 +2,8 @@ type Loader = () => Promise<any>;
 type Part = string | { param: string } | { catch: string };
 type Route = { load: Loader; parts: Part[]; module?: any };
 
-const apiModules = import.meta.glob("/src/api/**/*.{js,jsx}");
-const wsModules = import.meta.glob("/src/api/**/*.ws.{js,jsx}");
+const apiModules = import.meta.glob("/src/api/**/*.{js,jsx,ts,tsx}");
+const wsModules = import.meta.glob("/src/api/**/*.ws.{js,jsx,ts,tsx}");
 
 function patternOf(file: string, strip: RegExp): Part[] {
   const rel = file
@@ -26,12 +26,12 @@ const byStatic = (a: Route, b: Route): number =>
   b.parts.filter((p) => typeof p === "string").length - a.parts.filter((p) => typeof p === "string").length;
 
 const apiTable: Route[] = Object.entries(apiModules)
-  .filter(([file]) => !/\.ws\.jsx?$/.test(file))
-  .map(([file, load]) => ({ load, parts: patternOf(file, /\.jsx?$/) }))
+  .filter(([file]) => !/\.ws\.[jt]sx?$/.test(file))
+  .map(([file, load]) => ({ load, parts: patternOf(file, /\.[jt]sx?$/) }))
   .sort(byStatic);
 
 const wsTable: Route[] = Object.entries(wsModules)
-  .map(([file, load]) => ({ load, module: null, parts: patternOf(file, /\.ws\.jsx?$/) }))
+  .map(([file, load]) => ({ load, module: null, parts: patternOf(file, /\.ws\.[jt]sx?$/) }))
   .sort(byStatic);
 
 export async function preloadWs(): Promise<void> {

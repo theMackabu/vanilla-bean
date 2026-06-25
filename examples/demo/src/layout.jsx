@@ -5,6 +5,8 @@ import pkg from "../package.json";
 import { signal, onCleanup, useLocation, Head } from "vanilla-bean";
 
 function Clock() {
+  "use client";
+
   const seconds = signal(0);
   const id = setInterval(() => seconds++, 1000);
   onCleanup(() => clearInterval(id));

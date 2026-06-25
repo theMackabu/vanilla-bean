@@ -79,6 +79,7 @@ export function devPlugin(ctx: Ctx): any {
         try {
           const { renderRouteToHTML, resolveStatics } = await import("../ssr.ts");
           const fw = await server.ssrLoadModule("vanilla-bean");
+          fw.installTimerGuard?.("error");
           if (devTemplate === null)
             devTemplate = await resolveStatics(fw, buildShell(ctx.meta, { entry: ctx.devEntry }));
           const origin = "http://" + (req.headers.host || "localhost");

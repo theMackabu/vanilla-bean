@@ -1,4 +1,7 @@
+import type { Ctx } from "./ctx.ts";
+
 type Effect = {
+  ctx: Ctx;
   deps: Set<Set<Effect>>;
   children: Set<Effect>;
   cleanups: Array<() => void>;
@@ -9,29 +12,27 @@ type Effect = {
 };
 
 export type Owner = { children: Set<Effect>; cleanups: Array<() => void>; disposed: boolean };
-let currentOwnerNode: Owner | null = null;
 
 export function createOwner(): Owner {
   return { children: new Set(), cleanups: [], disposed: false };
 }
-export function runWithOwner<T>(owner: Owner | null, fn: () => T): T {
-  const prev = currentOwnerNode;
-  currentOwnerNode = owner;
+export function runWithOwner<T>(ctx: Ctx, owner: Owner | null, fn: () => T): T {
+  const prev = ctx.owner;
+  ctx.owner = owner;
   try {
     return fn();
   } finally {
-    currentOwnerNode = prev;
+    ctx.owner = prev;
   }
 }
-export function onCleanup(fn: () => void): void {
-  if (currentOwnerNode && !currentOwnerNode.disposed) currentOwnerNode.cleanups.push(fn);
+export function onCleanup(ctx: Ctx, fn: () => void): void {
+  if (ctx.owner && !ctx.owner.disposed) ctx.owner.cleanups.push(fn);
 }
 function runCleanups(node: { cleanups: Array<() => void> }): void {
   for (let i = node.cleanups.length - 1; i >= 0; i--) node.cleanups[i]!();
   node.cleanups.length = 0;
 }
 
-const effectStack: Effect[] = [];
 const pendingEffects = new Set<Effect>();
 let flushQueued = false;
 let flushing = false;
@@ -67,8 +68,8 @@ function notifyEffect(eff: Effect): void {
   else scheduleEffect(eff);
 }
 
-function currentEffect(): Effect | undefined {
-  return effectStack[effectStack.length - 1];
+function currentEffect(ctx: Ctx): Effect | undefined {
+  return ctx.listeners[ctx.listeners.length - 1];
 }
 
 function cleanup(eff: Effect): void {
@@ -81,12 +82,12 @@ export type Signal<T> = {
   (next: T): void;
 };
 
-export function makeSignal<T>(initial?: T): Signal<T> {
+export function makeSignal<T>(ctx: Ctx, initial?: T): Signal<T> {
   let value = initial as T;
   const subscribers = new Set<Effect>();
 
   const read = (): T => {
-    const eff = currentEffect();
+    const eff = currentEffect(ctx);
     if (eff) {
       subscribers.add(eff);
       eff.deps.add(subscribers);
@@ -97,7 +98,7 @@ export function makeSignal<T>(initial?: T): Signal<T> {
   const write = (next: T): void => {
     if (Object.is(next, value)) return;
     value = next;
-    const active = currentEffect();
+    const active = currentEffect(ctx);
     for (const eff of subscribers) {
       if (eff !== active) notifyEffect(eff);
     }
@@ -107,10 +108,10 @@ export function makeSignal<T>(initial?: T): Signal<T> {
   return fn as Signal<T>;
 }
 
-export function signal<T>(initial: T): T;
-export function signal<T = undefined>(): T | undefined;
-export function signal(initial?: any): any {
-  return makeSignal(initial);
+export function signal<T>(ctx: Ctx, initial: T): Signal<T>;
+export function signal<T = undefined>(ctx: Ctx): Signal<T | undefined>;
+export function signal(ctx: Ctx, initial?: any): any {
+  return makeSignal(ctx, initial);
 }
 
 export type Boundary = {
@@ -118,27 +119,24 @@ export type Boundary = {
   fail?: (err: unknown) => void;
 };
 
-let boundary: Boundary | null = null;
-export function withBoundary<T>(b: Boundary, fn: () => T): T {
-  const prev = boundary;
-  boundary = b;
+export function withBoundary<T>(ctx: Ctx, b: Boundary, fn: () => T): T {
+  const prev = ctx.boundary;
+  ctx.boundary = b;
   try {
     return fn();
   } finally {
-    boundary = prev;
+    ctx.boundary = prev;
   }
 }
 
-let asyncTracker: Set<Promise<unknown>> | null = null;
-export function trackAsync(): Set<Promise<unknown>> {
-  return (asyncTracker = new Set());
+export function trackAsync(ctx: Ctx): Set<Promise<unknown>> {
+  return (ctx.tracker = new Set());
 }
-export function untrackAsync(): void {
-  asyncTracker = null;
+export function untrackAsync(ctx: Ctx): void {
+  ctx.tracker = null;
 }
-
-export function trackServer(p: Promise<unknown>): void {
-  asyncTracker?.add(p);
+export function trackServer(ctx: Ctx, p: Promise<unknown>): void {
+  ctx.tracker?.add(p);
 }
 
 const isAsyncFn = (fn: unknown): boolean => (fn as any)?.constructor?.name === "AsyncFunction";
@@ -155,9 +153,10 @@ export async function settle(set: Set<Promise<unknown>>): Promise<boolean> {
   return did;
 }
 
-export function effect(fn: () => unknown): Effect {
-  const parent = currentOwnerNode;
+export function effect(ctx: Ctx, fn: () => unknown): Effect {
+  const parent = ctx.owner;
   const eff: Effect = {
+    ctx,
     deps: new Set(),
     children: new Set(),
     cleanups: [],
@@ -166,21 +165,21 @@ export function effect(fn: () => unknown): Effect {
     execute() {
       if (eff.disposed) return;
       if (import.meta.env?.SSR && eff.asyncFn) {
-        if (boundary && boundary.pending) boundary.pending(boundary.pending() + 1);
+        if (ctx.boundary && ctx.boundary.pending) ctx.boundary.pending(ctx.boundary.pending() + 1);
         return;
       }
       runCleanups(eff);
       cleanup(eff);
-      effectStack.push(eff);
-      const prevOwner = currentOwnerNode;
-      currentOwnerNode = eff;
-      const b = boundary;
+      ctx.listeners.push(eff);
+      const prevOwner = ctx.owner;
+      ctx.owner = eff;
+      const b = ctx.boundary;
       let result: unknown;
       try {
         result = fn();
       } finally {
-        effectStack.pop();
-        currentOwnerNode = prevOwner;
+        ctx.listeners.pop();
+        ctx.owner = prevOwner;
       }
       if (result && typeof (result as Promise<unknown>).then === "function") {
         if (b && b.pending) b.pending(b.pending() + 1);
@@ -212,12 +211,13 @@ export function disposeChildren(eff: Effect | null | undefined): void {
   eff.children.clear();
 }
 
-export function derived<T>(fn: () => T): () => T {
+export function derived<T>(ctx: Ctx, fn: () => T): () => T {
   let value: T;
   let dirty = true;
   const subscribers = new Set<Effect>();
-  const parent = currentOwnerNode;
+  const parent = ctx.owner;
   const computed: Effect = {
+    ctx,
     deps: new Set(),
     children: new Set(),
     cleanups: [],
@@ -225,7 +225,7 @@ export function derived<T>(fn: () => T): () => T {
     schedule() {
       if (computed.disposed || dirty) return;
       dirty = true;
-      const active = currentEffect();
+      const active = currentEffect(ctx);
       for (const eff of subscribers) {
         if (eff !== active) notifyEffect(eff);
       }
@@ -240,21 +240,21 @@ export function derived<T>(fn: () => T): () => T {
   const recompute = (): T => {
     runCleanups(computed);
     cleanup(computed);
-    effectStack.push(computed);
-    const prevOwner = currentOwnerNode;
-    currentOwnerNode = computed;
+    ctx.listeners.push(computed);
+    const prevOwner = ctx.owner;
+    ctx.owner = computed;
     try {
       value = fn();
       dirty = false;
       return value;
     } finally {
-      effectStack.pop();
-      currentOwnerNode = prevOwner;
+      ctx.listeners.pop();
+      ctx.owner = prevOwner;
     }
   };
 
   return () => {
-    const eff = currentEffect();
+    const eff = currentEffect(ctx);
     if (eff) {
       subscribers.add(eff);
       eff.deps.add(subscribers);

@@ -2,6 +2,8 @@ import { h, claim, collectAdopt, clearHead, flushHead, withCursor, type Componen
 import { ErrorBoundary } from "./suspense.ts";
 import { makeSignal, createOwner, runWithOwner, dispose, type Owner } from "./reactive.ts";
 import { isRedirect } from "./request.ts";
+import { makeCtx, type Ctx, type Loc } from "./ctx.ts";
+import { setRendering } from "./guard.ts";
 
 type Loader = () => Promise<any>;
 
@@ -21,14 +23,6 @@ type DynamicRoute = {
   parts: Part[];
 };
 
-type Loc = {
-  path: string;
-  query: Record<string, string>;
-  search: string;
-  hash: string;
-  params: Record<string, unknown>;
-};
-
 type Chain = {
   layouts: Component[];
   page: Component | null;
@@ -37,6 +31,7 @@ type Chain = {
   serverRoute: boolean;
   serverStart: number | null;
   cache: boolean;
+  params: Record<string, unknown>;
 };
 
 const pageModules = import.meta.glob("/src/pages/**/*.{js,jsx,ts,tsx}");
@@ -169,7 +164,7 @@ function nearestDir(dirs: Record<string, Loader>, urlPath: string): string | nul
 
 async function loadChain(path: string): Promise<Chain> {
   const m = matchRoute(path);
-  matchedParams = m ? m.params : {};
+  const params = m ? m.params : {};
 
   const known = !!m;
   const nfDir = known ? null : nearestDir(notFoundDirs, path);
@@ -199,33 +194,30 @@ async function loadChain(path: string): Promise<Chain> {
     serverRoute,
     serverStart: serverRoute ? serverStart : null,
     cache,
+    params,
   };
 }
 
-function buildPage(chain: Chain, props: Loc, path: string, reset: () => void): Node {
+function buildPage(ctx: Ctx, chain: Chain, props: Loc, path: string, reset: () => void): Node {
   const { page, ErrorComp } = chain;
-  const make = () => (page ? h(page, props) : document.createTextNode(`404: no page for ${path}`));
-  if (!ErrorComp) return make();
-  return h(ErrorBoundary, { fallback: (error: unknown) => h(ErrorComp, { error, reset }) }, make);
+  const make = () => (page ? h(ctx, page, props) : ctx.doc.createTextNode(`404: no page for ${path}`));
+  if (!ErrorComp) return make() as Node;
+  return h(ctx, ErrorBoundary, { fallback: (error: unknown) => h(ctx, ErrorComp, { error, reset }) }, make) as Node;
 }
 
-let matchedParams: Record<string, unknown> = {};
-
-function snapshot(): Loc {
-  if (typeof location === "undefined") return { path: "/", query: {}, search: "", hash: "", params: {} };
-  const u = new URL(location.href);
+function snapshot(ctx: Ctx): Loc {
+  const u = ctx.url;
   return {
     path: u.pathname,
     query: Object.fromEntries(u.searchParams),
     search: u.search,
     hash: u.hash,
-    params: matchedParams,
+    params: ctx.matchedParams,
   };
 }
 
-let loc = makeSignal<Loc>(snapshot());
-export function useLocation(): Loc {
-  return loc();
+export function useLocation(ctx: Ctx): Loc {
+  return ctx.loc!();
 }
 
 const staticRegistry = new Map<string, () => unknown>();
@@ -267,32 +259,33 @@ export async function collectStatics(): Promise<Record<string, unknown>> {
   return staticData;
 }
 
-let rootEl: HTMLElement | null = null;
-let mounted: { Comp: Component; outlet: HTMLElement; owner: Owner }[] = [];
-
-let booted = false;
-let pageOwner: Owner | null = null;
-let options: { transitions?: boolean } = { transitions: false };
+let clientCtx: Ctx = null as any;
 
 export function start(config: Record<string, unknown> = {}): void {
-  options = { ...options, ...config };
-  rootEl = document.getElementById("root");
+  const ctx = makeCtx(document, (globalThis as any).Node, { url: new URL(location.href) });
+  clientCtx = ctx;
+
+  ctx.transitions = !!(config as any).transitions;
+  ctx.rootEl = document.getElementById("root");
+  ctx.loc = makeSignal(ctx, snapshot(ctx));
   const tag = document.getElementById("_vanilla_static");
+
   if (tag) {
     try {
       setStaticData(JSON.parse(tag.textContent || "{}"));
     } catch {}
   }
-  collectAdopt();
+
+  collectAdopt(ctx);
   const here = () => location.pathname + location.search + location.hash;
-  go(here(), false);
-  window.addEventListener("popstate", () => go(here(), false));
-  document.addEventListener("click", onLinkClick);
-  document.addEventListener("pointerover", onLinkHover);
+  go(ctx, here(), false);
+  window.addEventListener("popstate", () => go(ctx, here(), false));
+  document.addEventListener("click", (e) => onLinkClick(ctx, e as MouseEvent));
+  document.addEventListener("pointerover", (e) => onLinkHover(ctx, e));
 }
 
 const prefetched = new Set<string>();
-function onLinkHover(e: Event): void {
+function onLinkHover(_ctx: Ctx, e: Event): void {
   const a = (e.target as Element)?.closest?.("a");
   if (!a || (a as HTMLAnchorElement).target || a.hasAttribute("download")) return;
   const href = a.getAttribute("href");
@@ -303,7 +296,7 @@ function onLinkHover(e: Event): void {
   loadChain(url.pathname).catch(() => prefetched.delete(url.pathname));
 }
 
-function onLinkClick(e: MouseEvent): void {
+function onLinkClick(ctx: Ctx, e: MouseEvent): void {
   if (e.defaultPrevented || e.button !== 0) return;
   if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
   const a = (e.target as Element).closest("a") as HTMLAnchorElement | null;
@@ -315,29 +308,31 @@ function onLinkClick(e: MouseEvent): void {
   if (!matchRoute(url.pathname)) return;
   e.preventDefault();
   const target = url.pathname + url.search + url.hash;
-  if (target !== location.pathname + location.search + location.hash) go(target, true);
+  if (target !== location.pathname + location.search + location.hash) go(ctx, target, true);
 }
 
-async function go(href: string, push: boolean): Promise<void> {
+async function go(ctx: Ctx, href: string, push: boolean): Promise<void> {
   const url = new URL(href, location.href);
   const chain = await loadChain(url.pathname);
-  const navPromise = booted && chain.serverRoute ? fetchNav(url) : null;
+  const navPromise = ctx.booted && chain.serverRoute ? fetchNav(url) : null;
 
   const apply = () => {
     if (push) history.pushState({}, "", url.pathname + url.search + url.hash);
-    loc(snapshot());
-    clearHead();
+    ctx.url = url;
+    ctx.matchedParams = chain.params;
+    ctx.loc!(snapshot(ctx));
+    clearHead(ctx);
     try {
-      if (!booted) hydrateBoot(chain, url.pathname);
-      else swap(chain, url.pathname);
+      if (!ctx.booted) hydrateBoot(ctx, chain, url.pathname);
+      else swap(ctx, chain, url.pathname);
     } catch (e) {
       if (isRedirect(e)) return navigate((e as any).redirect.url, { replace: true });
       throw e;
     }
-    flushHead();
+    flushHead(ctx);
   };
 
-  if (options.transitions && (document as any).startViewTransition) (document as any).startViewTransition(apply);
+  if (ctx.transitions && (document as any).startViewTransition) (document as any).startViewTransition(apply);
   else apply();
 
   if (navPromise) {
@@ -348,16 +343,16 @@ async function go(href: string, push: boolean): Promise<void> {
         navigate(nav.redirect, { replace: true });
         return;
       }
-      if (nav.islands && location.pathname + location.search === target) fillServerIslands(nav.islands);
+      if (nav.islands && location.pathname + location.search === target) fillServerIslands(ctx, nav.islands);
     } catch {
       location.href = url.pathname + url.search + url.hash;
     }
   }
 }
 
-function fillServerIslands(islands: Map<string, string>): void {
+function fillServerIslands(ctx: Ctx, islands: Map<string, string>): void {
   for (const [key, html] of islands) {
-    const el = document.querySelector(`island[data-mode="server"][data-key="${key}"]`);
+    const el = ctx.doc.querySelector(`island[data-mode="server"][data-key="${key}"]`);
     if (el) el.innerHTML = html;
   }
 }
@@ -372,7 +367,8 @@ async function fetchNav(url: URL): Promise<{ islands?: Map<string, string>; redi
 }
 
 export function navigate(href: string, { replace = false }: { replace?: boolean } = {}): void {
-  if (typeof location === "undefined") return;
+  const ctx = clientCtx;
+  if (!ctx || typeof location === "undefined") return;
   const url = new URL(href, location.href);
   if (url.origin !== location.origin) {
     location.href = href;
@@ -381,103 +377,112 @@ export function navigate(href: string, { replace = false }: { replace?: boolean 
   const target = url.pathname + url.search + url.hash;
   if (replace) {
     history.replaceState({}, "", target);
-    go(target, false);
+    go(ctx, target, false);
   } else {
-    go(target, true);
+    go(ctx, target, true);
   }
 }
 
-function patchParams(mutate: (sp: URLSearchParams) => void, replace: boolean): void {
-  if (typeof location === "undefined") return;
+function patchParams(ctx: Ctx, mutate: (sp: URLSearchParams) => void, replace: boolean): void {
+  if (!ctx || typeof location === "undefined") return;
   const url = new URL(location.href);
   mutate(url.searchParams);
   history[replace ? "replaceState" : "pushState"]({}, "", url.pathname + url.search + url.hash);
-  loc(snapshot());
+  ctx.url = url;
+  ctx.loc!(snapshot(ctx));
 }
 
 (navigate as any).params = {
   get: (key: string) => (typeof location === "undefined" ? null : new URL(location.href).searchParams.get(key)),
   has: (key: string) => typeof location !== "undefined" && new URL(location.href).searchParams.has(key),
   set: (key: string, value: unknown, { replace = true }: { replace?: boolean } = {}) =>
-    patchParams((sp) => (value == null ? sp.delete(key) : sp.set(key, String(value))), replace),
-  delete: (key: string, { replace = true }: { replace?: boolean } = {}) => patchParams((sp) => sp.delete(key), replace),
+    patchParams(clientCtx, (sp) => (value == null ? sp.delete(key) : sp.set(key, String(value))), replace),
+  delete: (key: string, { replace = true }: { replace?: boolean } = {}) =>
+    patchParams(clientCtx, (sp) => sp.delete(key), replace),
 };
 
-function createOutlet(): HTMLElement {
-  const d = document.createElement("div");
+function createOutlet(ctx: Ctx): HTMLElement {
+  const d = ctx.doc.createElement("div");
   d.style.display = "contents";
   return d;
 }
 
-function buildLayered(chain: Chain, path: string, reset: () => void): Node {
-  mounted = [];
+function buildLayered(ctx: Ctx, chain: Chain, path: string, reset: () => void): Node {
+  ctx.mounted = [];
   const build = (i: number): Node => {
     if (i >= chain.layouts.length) {
-      pageOwner = createOwner();
-      return runWithOwner(pageOwner, () => buildPage(chain, { ...loc() }, path, reset));
+      ctx.pageOwner = createOwner();
+      return runWithOwner(ctx, ctx.pageOwner, () => buildPage(ctx, chain, { ...ctx.loc!() }, path, reset));
     }
     const owner = createOwner();
     let outlet!: HTMLElement;
     const slot = () => {
-      outlet = (claim("div") as HTMLElement | null) ?? createOutlet();
-      withCursor(outlet.firstChild, () => {
+      outlet = (claim(ctx, "div") as HTMLElement | null) ?? createOutlet(ctx);
+      withCursor(ctx, outlet.firstChild, () => {
         const inner = build(i + 1);
-        if (inner instanceof Node && inner.parentNode !== outlet) outlet.appendChild(inner);
+        if (inner instanceof ctx.Node && (inner as Node).parentNode !== outlet) outlet.appendChild(inner as Node);
       });
       return outlet;
     };
-    const node = runWithOwner(owner, () => h(chain.layouts[i]!, null, slot)) as Node;
-    mounted.push({ Comp: chain.layouts[i]!, outlet, owner });
+    const node = runWithOwner(ctx, owner, () => h(ctx, chain.layouts[i]!, null, slot)) as Node;
+    ctx.mounted.push({ Comp: chain.layouts[i]!, outlet, owner });
     return node;
   };
   return build(0);
 }
 
-function hydrateBoot(chain: Chain, path: string): void {
-  booted = true;
-  const reset = () => go(location.pathname + location.search + location.hash, false);
-  withCursor(rootEl!.firstChild, () => buildLayered(chain, path, reset));
+function hydrateBoot(ctx: Ctx, chain: Chain, path: string): void {
+  ctx.booted = true;
+  const reset = () => go(ctx, location.pathname + location.search + location.hash, false);
+  withCursor(ctx, ctx.rootEl!.firstChild, () => buildLayered(ctx, chain, path, reset));
 }
 
-function swap(chain: Chain, path: string): void {
+function swap(ctx: Ctx, chain: Chain, path: string): void {
   const { layouts } = chain;
+  const mounted = ctx.mounted;
   let k = 0;
 
   while (k < mounted.length && k < layouts.length && mounted[k]!.Comp === layouts[k]) k++;
   if (chain.serverStart != null) k = Math.min(k, chain.serverStart);
 
-  dispose(pageOwner);
-  pageOwner = null;
+  dispose(ctx.pageOwner);
+  ctx.pageOwner = null;
   for (let i = k; i < mounted.length; i++) dispose(mounted[i]!.owner);
-  mounted = mounted.slice(0, k);
+  ctx.mounted = mounted.slice(0, k);
 
-  const parentOutlet = k === 0 ? rootEl! : mounted[k - 1]!.outlet;
+  const parentOutlet = k === 0 ? ctx.rootEl! : ctx.mounted[k - 1]!.outlet;
   const layers: { Comp: Component; outlet: HTMLElement; owner: Owner }[] = [];
   for (let i = k; i < layouts.length; i++) {
-    const outlet = document.createElement("div");
+    const outlet = ctx.doc.createElement("div");
     outlet.style.display = "contents";
     layers.push({ Comp: layouts[i]!, outlet, owner: createOwner() });
   }
 
-  const reset = () => go(location.pathname + location.search + location.hash, false);
-  pageOwner = createOwner();
-  let child: any = runWithOwner(pageOwner, () => buildPage(chain, { ...loc() }, path, reset));
+  const reset = () => go(ctx, location.pathname + location.search + location.hash, false);
+  ctx.pageOwner = createOwner();
+  let child: any = runWithOwner(ctx, ctx.pageOwner, () => buildPage(ctx, chain, { ...ctx.loc!() }, path, reset));
   for (let i = layers.length - 1; i >= 0; i--) {
     const layer = layers[i]!;
     layer.outlet.replaceChildren(child);
-    child = runWithOwner(layer.owner, () => h(layer.Comp, null, layer.outlet));
+    child = runWithOwner(ctx, layer.owner, () => h(ctx, layer.Comp, null, layer.outlet));
   }
-  if (k === 0) parentOutlet.replaceChildren(document.createComment("app"), child);
+  if (k === 0) parentOutlet.replaceChildren(ctx.doc.createComment("app"), child);
   else parentOutlet.replaceChildren(child);
-  mounted = mounted.concat(layers);
+  ctx.mounted = ctx.mounted.concat(layers);
 }
 
-export async function renderRouteToDocument(path: string): Promise<{ cache: boolean }> {
-  clearHead();
+export async function renderRouteToDocument(ctx: Ctx, path: string): Promise<{ cache: boolean }> {
+  clearHead(ctx);
   const chain = await loadChain(path);
-  loc = makeSignal<Loc>(snapshot());
-  const tree = buildLayered(chain, path, () => {});
-  document.getElementById("root")!.replaceChildren(tree);
-  flushHead();
+  ctx.matchedParams = chain.params;
+  ctx.loc = makeSignal(ctx, snapshot(ctx));
+  setRendering(true);
+  try {
+    const tree = buildLayered(ctx, chain, path, () => {});
+    ctx.doc.getElementById("root")!.replaceChildren(tree as Node);
+  } finally {
+    setRendering(false);
+  }
+  flushHead(ctx);
   return { cache: chain.cache };
 }

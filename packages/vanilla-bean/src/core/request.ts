@@ -1,24 +1,11 @@
-type Redirect = { url: string; status: number };
-type Ctx = { request: Request; resHeaders: Headers; redirect: Redirect | null };
+import type { Ctx, Redirect } from "./ctx.ts";
 
-let ctx: Ctx | null = null;
-
-export function enterRequest(request: Request): Ctx {
-  ctx = { request, resHeaders: new Headers(), redirect: null };
-  return ctx;
-}
-export function exitRequest(): Ctx | null {
-  const prev = ctx;
-  ctx = null;
-  return prev;
-}
-
-export function getRequest(): Request {
-  if (!ctx) throw new Error("getRequest() is only available on the server, during a request");
+export function getRequest(ctx: Ctx): Request {
+  if (!ctx.request) throw new Error("getRequest() is only available on the server, during a request");
   return ctx.request;
 }
-export function headers(): Headers {
-  return getRequest().headers;
+export function headers(ctx: Ctx): Headers {
+  return getRequest(ctx).headers;
 }
 
 function parseCookies(header: string): Record<string, string> {
@@ -54,29 +41,28 @@ function serializeCookie(name: string, value: string, o: CookieOptions): string 
   return s;
 }
 
-export function cookies() {
-  const jar = parseCookies(ctx?.request.headers.get("cookie") || "");
+export function cookies(ctx: Ctx) {
+  const jar = parseCookies(ctx.request?.headers.get("cookie") || "");
   return {
     get: (name: string): string | undefined => jar[name],
     set: (name: string, value: string, options: CookieOptions = {}): void => {
-      ctx?.resHeaders.append("set-cookie", serializeCookie(name, value, options));
+      ctx.resHeaders.append("set-cookie", serializeCookie(name, value, options));
     },
     delete: (name: string, options: CookieOptions = {}): void => {
-      ctx?.resHeaders.append("set-cookie", serializeCookie(name, "", { ...options, maxAge: 0 }));
+      ctx.resHeaders.append("set-cookie", serializeCookie(name, "", { ...options, maxAge: 0 }));
     },
   };
 }
 
-export function setHeader(name: string, value: string): void {
-  ctx?.resHeaders.set(name, value);
+export function setHeader(ctx: Ctx, name: string, value: string): void {
+  ctx.resHeaders.set(name, value);
 }
 
-export function getResponseHeaders(): Headers | null {
-  return ctx?.resHeaders ?? null;
+export function getResponseHeaders(ctx: Ctx): Headers {
+  return ctx.resHeaders;
 }
-
-export function getRedirect(): Redirect | null {
-  return ctx?.redirect ?? null;
+export function getRedirect(ctx: Ctx): Redirect | null {
+  return ctx.redirect;
 }
 
 class RedirectError extends Error {
@@ -87,10 +73,9 @@ class RedirectError extends Error {
   }
 }
 
-export function redirect(url: string, status = 302): never {
-  const r = { url, status };
-  if (ctx) ctx.redirect = r;
-  throw new RedirectError(r);
+export function redirect(ctx: Ctx, url: string, status = 302): never {
+  ctx.redirect = { url, status };
+  throw new RedirectError(ctx.redirect);
 }
 
 export function isRedirect(err: unknown): boolean {

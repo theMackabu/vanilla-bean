@@ -1,27 +1,28 @@
 import { makeSignal, effect, withBoundary, type Boundary } from "./reactive.ts";
 import { claim, withCursor, buildFresh, type Props } from "./dom.ts";
 import { isRedirect } from "./request.ts";
+import type { Ctx } from "./ctx.ts";
 
 type Render = () => unknown;
 
-export function Suspense(props: Props): HTMLElement {
+export function Suspense(ctx: Ctx, props: Props): HTMLElement {
   const render = asFn(props.children);
-  const pending = makeSignal(0);
-  const error = makeSignal<unknown>(null);
-  const container = box();
+  const pending = makeSignal(ctx, 0);
+  const error = makeSignal<unknown>(ctx, null);
+  const container = box(ctx);
 
   let content: Node[];
   let hydrated: boolean;
   if (container.hasAttribute && container.hasAttribute("data-fb")) {
     container.removeAttribute("data-fb");
-    content = buildFresh(() => build({ pending, fail: (e) => error(e) }, render, error));
+    content = buildFresh(ctx, () => build(ctx, { pending, fail: (e) => error(e) }, render, error));
     hydrated = false;
   } else {
-    [content, hydrated] = buildContent(container, { pending, fail: (e) => error(e) }, render, error);
+    [content, hydrated] = buildContent(ctx, container, { pending, fail: (e) => error(e) }, render, error);
   }
 
   let first = true;
-  effect(() => {
+  effect(ctx, () => {
     const err = error();
     const loading = pending() > 0;
     const show = err || loading;
@@ -30,45 +31,46 @@ export function Suspense(props: Props): HTMLElement {
       first = false;
       if (!show && hydrated) return;
     }
-    const nodes = show ? buildFresh(() => toNodes(call(props.fallback, { loading, error: err }))) : content;
+    const nodes = show ? buildFresh(ctx, () => toNodes(ctx, call(props.fallback, { loading, error: err }))) : content;
     container.replaceChildren(...nodes);
   });
   return container;
 }
 
-export function ErrorBoundary(props: Props): HTMLElement {
+export function ErrorBoundary(ctx: Ctx, props: Props): HTMLElement {
   const render = asFn(props.children);
-  const error = makeSignal<unknown>(null);
-  const container = box();
-  const [content, hydrated] = buildContent(container, { fail: (e) => error(e) }, render, error);
+  const error = makeSignal<unknown>(ctx, null);
+  const container = box(ctx);
+  const [content, hydrated] = buildContent(ctx, container, { fail: (e) => error(e) }, render, error);
 
   let first = true;
-  effect(() => {
+  effect(ctx, () => {
     const err = error();
     if (first) {
       first = false;
       if (!err && hydrated) return;
     }
-    const nodes = err ? buildFresh(() => toNodes(call(props.fallback, err))) : content;
+    const nodes = err ? buildFresh(ctx, () => toNodes(ctx, call(props.fallback, err))) : content;
     container.replaceChildren(...nodes);
   });
   return container;
 }
 
 function buildContent(
+  ctx: Ctx,
   container: HTMLElement,
-  ctx: Boundary,
+  boundary: Boundary,
   render: Render,
   error: (e: unknown) => void,
 ): [Node[], boolean] {
-  const built = withCursor(container.firstChild, () => build(ctx, render, error));
+  const built = withCursor(ctx, container.firstChild, () => build(ctx, boundary, render, error));
   if (container.firstChild) return [[...container.childNodes], true];
   return [built, false];
 }
 
-function build(ctx: Boundary, render: Render, error: (e: unknown) => void): Node[] {
+function build(ctx: Ctx, boundary: Boundary, render: Render, error: (e: unknown) => void): Node[] {
   try {
-    return toNodes(withBoundary(ctx, render));
+    return toNodes(ctx, withBoundary(ctx, boundary, render));
   } catch (e) {
     if (isRedirect(e)) throw e;
     error(e);
@@ -80,16 +82,16 @@ const asFn = (children: unknown): Render => (typeof children === "function" ? (c
 const call = (fb: unknown, arg: unknown): unknown =>
   typeof fb === "function" ? (fb as (a: unknown) => unknown)(arg) : fb;
 
-function box(): HTMLElement {
-  const c = (claim("div") as HTMLElement) || document.createElement("div");
+function box(ctx: Ctx): HTMLElement {
+  const c = (claim(ctx, "div") as HTMLElement) || ctx.doc.createElement("div");
   c.style.display = "contents";
   return c;
 }
 
-function toNodes(v: unknown): Node[] {
+function toNodes(ctx: Ctx, v: unknown): Node[] {
   if (v == null || v === false) return [];
-  if (Array.isArray(v)) return v.flatMap(toNodes);
+  if (Array.isArray(v)) return v.flatMap((x) => toNodes(ctx, x));
   if (v && (v as Node).nodeType === 11) return [...(v as DocumentFragment).childNodes];
-  if (v instanceof Node) return [v];
-  return [document.createTextNode(String(v))];
+  if (v instanceof ctx.Node) return [v as Node];
+  return [ctx.doc.createTextNode(String(v))];
 }

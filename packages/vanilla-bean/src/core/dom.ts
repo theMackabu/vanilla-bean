@@ -1,12 +1,13 @@
 import { effect, disposeChildren, trackServer } from "./reactive.ts";
+import type { Ctx } from "./ctx.ts";
 
 export type Props = Record<string, any> & { children?: unknown };
 
 export type Component = {
-  (props: Props): unknown;
+  (ctx: Ctx, props: Props): unknown;
   __mode?: string;
   __key?: string;
-  fallback?: (p: Props) => unknown;
+  fallback?: (ctx: Ctx, p: Props) => unknown;
 };
 
 const EMPTY_PROPS: Props = {};
@@ -16,30 +17,32 @@ type Thunk = { (): unknown; dyn?: boolean };
 const isEventProp = (key: string): boolean => /^on[A-Z]/.test(key);
 export const __dyn = (fn: Thunk): Thunk => ((fn.dyn = true), fn);
 
-let cursor: Node | null = null;
-let hydrating = false;
+export const __use =
+  (ctx: Ctx, comp: (ctx: Ctx, props: Props) => unknown) =>
+  (...args: unknown[]): unknown =>
+    comp(ctx, ...(args as [Props]));
 
-export function withCursor<T>(first: Node | null, fn: () => T): T {
-  const savedCursor = cursor;
-  const savedHydrating = hydrating;
-  cursor = first;
-  if (first) hydrating = true;
+export function withCursor<T>(ctx: Ctx, first: Node | null, fn: () => T): T {
+  const savedCursor = ctx.cursor;
+  const savedHydrating = ctx.hydrating;
+  ctx.cursor = first;
+  if (first) ctx.hydrating = true;
   try {
     return fn();
   } finally {
-    cursor = savedCursor;
-    hydrating = savedHydrating;
+    ctx.cursor = savedCursor;
+    ctx.hydrating = savedHydrating;
   }
 }
 
-export function claim(tag: string): Element | null {
-  return cursor ? adoptEl(tag) : null;
+export function claim(ctx: Ctx, tag: string): Element | null {
+  return ctx.cursor ? adoptEl(ctx, tag) : null;
 }
 
-function adoptEl(tag: string): Element | null {
-  const n = cursor;
+function adoptEl(ctx: Ctx, tag: string): Element | null {
+  const n = ctx.cursor;
   if (n && n.nodeType === 1 && (n as Element).tagName.toLowerCase() === tag) {
-    cursor = n.nextSibling;
+    ctx.cursor = n.nextSibling;
     return n as Element;
   }
   if (n)
@@ -49,45 +52,43 @@ function adoptEl(tag: string): Element | null {
   return null;
 }
 
-const adoptMap = new Map<string, Element>();
-
 export function __mark(comp: Component, mode: string, key: string): Component {
   comp.__mode = mode;
   comp.__key = key;
   return comp;
 }
 
-export function collectAdopt(): void {
-  adoptMap.clear();
-  if (typeof document === "undefined") return;
-  for (const n of document.querySelectorAll('island[data-mode="static"]')) {
+export function collectAdopt(ctx: Ctx): void {
+  ctx.adoptMap.clear();
+  if (!ctx.doc) return;
+  for (const n of ctx.doc.querySelectorAll('island[data-mode="static"]')) {
     const k = n.getAttribute("data-key");
-    if (k) adoptMap.set(k, n);
+    if (k) ctx.adoptMap.set(k, n);
   }
 }
 
-function islandWrapper(mode: string, key?: string): HTMLElement {
-  const d = document.createElement("island") as HTMLElement;
+function islandWrapper(ctx: Ctx, mode: string, key?: string): HTMLElement {
+  const d = ctx.doc.createElement("island") as HTMLElement;
   d.setAttribute("data-mode", mode);
   if (key) d.setAttribute("data-key", key);
   d.style.display = "contents";
   return d;
 }
 
-export function buildFresh<T>(fn: () => T): T {
-  const savedCursor = cursor;
-  const savedHydrating = hydrating;
-  cursor = null;
-  hydrating = false;
+export function buildFresh<T>(ctx: Ctx, fn: () => T): T {
+  const savedCursor = ctx.cursor;
+  const savedHydrating = ctx.hydrating;
+  ctx.cursor = null;
+  ctx.hydrating = false;
   try {
     return fn();
   } finally {
-    cursor = savedCursor;
-    hydrating = savedHydrating;
+    ctx.cursor = savedCursor;
+    ctx.hydrating = savedHydrating;
   }
 }
 
-export function h(tag: string | Component, props: Props | null, ...children: unknown[]): any {
+export function h(ctx: Ctx, tag: string | Component, props: Props | null, ...children: unknown[]): any {
   if (typeof tag === "function") {
     const mode = tag.__mode;
     const child = children.length <= 1 ? children[0] : children;
@@ -98,74 +99,75 @@ export function h(tag: string | Component, props: Props | null, ...children: unk
         ? EMPTY_PROPS
         : { children: child };
 
-    const call = () => tag(p);
+    const call = () => tag(ctx, p);
 
-    if (hydrating && (mode === "static" || mode === "server" || mode === "client")) {
-      const slot = claim("island");
-      if (mode === "static" || mode === "server") return slot || buildFresh(call);
-      const real = buildFresh(call);
+    if (ctx.hydrating && (mode === "static" || mode === "server" || mode === "client")) {
+      const slot = claim(ctx, "island");
+      if (mode === "static" || mode === "server") return slot || buildFresh(ctx, call);
+      const real = buildFresh(ctx, call);
       if (slot) (slot as Element).replaceWith(real as Node);
       return real;
     }
 
-    if (!import.meta.env?.SSR && mode === "static" && tag.__key && adoptMap.has(tag.__key)) {
-      const n = adoptMap.get(tag.__key)!;
-      adoptMap.delete(tag.__key);
+    if (!import.meta.env?.SSR && mode === "static" && tag.__key && ctx.adoptMap.has(tag.__key)) {
+      const n = ctx.adoptMap.get(tag.__key)!;
+      ctx.adoptMap.delete(tag.__key);
       return n;
     }
 
     if (!import.meta.env?.SSR && mode === "server") {
-      return islandWrapper("server", tag.__key);
+      return islandWrapper(ctx, "server", tag.__key);
     }
 
     if (import.meta.env?.SSR && mode === "client") {
-      const w = islandWrapper("client", tag.__key);
-      if (typeof tag.fallback === "function") appendChild(w, tag.fallback(p));
+      const w = islandWrapper(ctx, "client", tag.__key);
+      if (typeof tag.fallback === "function") appendChild(ctx, w, tag.fallback(ctx, p));
       return w;
     }
 
     if (import.meta.env?.SSR && mode === "server") {
-      const w = islandWrapper("server", tag.__key);
+      const w = islandWrapper(ctx, "server", tag.__key);
       const out: unknown = call();
       if (out && typeof (out as Promise<unknown>).then === "function") {
         w.setAttribute("data-fb", "");
         trackServer(
+          ctx,
           Promise.resolve(out).then((node) => {
-            appendChild(w, node);
+            appendChild(ctx, w, node);
             w.removeAttribute("data-fb");
           }),
         );
       } else {
-        appendChild(w, out);
+        appendChild(ctx, w, out);
       }
       return w;
     }
 
     const node = call();
     if (import.meta.env?.SSR && mode === "static") {
-      const w = islandWrapper("static", tag.__key);
-      appendChild(w, node);
+      const w = islandWrapper(ctx, "static", tag.__key);
+      appendChild(ctx, w, node);
       return w;
     }
     return node;
   }
 
-  const found = cursor ? adoptEl(tag) : null;
-  const el = (found as HTMLElement) || document.createElement(tag);
-  const parentNext = cursor;
+  const found = ctx.cursor ? adoptEl(ctx, tag) : null;
+  const el = (found as HTMLElement) || ctx.doc.createElement(tag);
+  const parentNext = ctx.cursor;
 
   if (props) {
     for (const key in props) {
       const value = props[key];
       if (isEventProp(key)) el.addEventListener(key.slice(2).toLowerCase(), value);
-      else if (typeof value === "function") effect(() => setProp(el, key, value()));
+      else if (typeof value === "function") effect(ctx, () => setProp(el, key, value()));
       else if (!found) setProp(el, key, value);
     }
   }
 
-  cursor = found ? el.firstChild : null;
-  appendChild(el, children);
-  cursor = parentNext;
+  ctx.cursor = found ? el.firstChild : null;
+  appendChild(ctx, el, children);
+  ctx.cursor = parentNext;
   return el;
 }
 
@@ -188,71 +190,70 @@ function setProp(el: any, key: string, value: any): void {
   }
 }
 
-function appendChild(parent: Node, child: unknown): void {
+function appendChild(ctx: Ctx, parent: Node, child: unknown): void {
   if (child == null || child === false || child === true) return;
   if (Array.isArray(child)) {
-    for (const c of child) appendChild(parent, c);
+    for (const c of child) appendChild(ctx, parent, c);
   } else if (typeof child === "function") {
-    if ((child as Thunk).dyn) insertDynamic(parent, child as Thunk);
-    else appendChild(parent, (child as Thunk)());
-  } else if (child instanceof Node) {
-    if (hydrating && child.parentNode) return;
-    parent.appendChild(child);
+    if ((child as Thunk).dyn) insertDynamic(ctx, parent, child as Thunk);
+    else appendChild(ctx, parent, (child as Thunk)());
+  } else if (child instanceof ctx.Node) {
+    if (ctx.hydrating && (child as Node).parentNode) return;
+    parent.appendChild(child as Node);
   } else {
     const s = String(child);
-    if (cursor && cursor.nodeType === 3) {
-      const n = cursor as Text;
+    if (ctx.cursor && ctx.cursor.nodeType === 3) {
+      const n = ctx.cursor as Text;
       if (n.data === s) {
-        cursor = n.nextSibling;
+        ctx.cursor = n.nextSibling;
         return;
       }
       if (n.data.startsWith(s)) {
-        const rest = document.createTextNode(n.data.slice(s.length));
+        const rest = ctx.doc.createTextNode(n.data.slice(s.length));
         n.data = s;
         parent.insertBefore(rest, n.nextSibling);
-        cursor = rest;
+        ctx.cursor = rest;
         return;
       }
     }
-    parent.appendChild(document.createTextNode(s));
+    parent.appendChild(ctx.doc.createTextNode(s));
   }
 }
 
-function insertDynamic(parent: Node, thunk: Thunk): void {
+function insertDynamic(ctx: Ctx, parent: Node, thunk: Thunk): void {
   let anchor: Node;
   let current: Node[] = [];
-  if (cursor) {
-    while (cursor && cursor.nodeType !== 8) {
-      current.push(cursor);
-      cursor = cursor.nextSibling;
+  if (ctx.cursor) {
+    while (ctx.cursor && ctx.cursor.nodeType !== 8) {
+      current.push(ctx.cursor);
+      ctx.cursor = ctx.cursor.nextSibling;
     }
-    if (cursor) {
-      anchor = cursor;
-      cursor = cursor.nextSibling;
+    if (ctx.cursor) {
+      anchor = ctx.cursor;
+      ctx.cursor = ctx.cursor.nextSibling;
     } else {
-      anchor = document.createComment("");
+      anchor = ctx.doc.createComment("");
       parent.appendChild(anchor);
     }
   } else {
-    anchor = document.createComment("");
+    anchor = ctx.doc.createComment("");
     parent.appendChild(anchor);
   }
 
   let owner: ReturnType<typeof effect>;
-  owner = effect(() => {
+  owner = effect(ctx, () => {
     const value = thunk();
     if (
       (typeof value === "string" || typeof value === "number") &&
       current.length === 1 &&
-      current[0]!.nodeType === Node.TEXT_NODE
+      current[0]!.nodeType === 3
     ) {
       (current[0] as Text).data = String(value);
-      if ((globalThis as any).__REACTIVE_DEBUG__) console.log("[reactive] text node updated in place ->", value);
       return;
     }
     disposeChildren(owner);
-    const frag = document.createDocumentFragment();
-    appendChild(frag, value);
+    const frag = ctx.doc.createDocumentFragment();
+    appendChild(ctx, frag, value);
     const next = [...frag.childNodes];
     for (const n of current) (n as ChildNode).remove();
     parent.insertBefore(frag, anchor);
@@ -260,24 +261,24 @@ function insertDynamic(parent: Node, thunk: Thunk): void {
   });
 }
 
-function toNodes(value: unknown): Node[] {
+function toNodes(ctx: Ctx, value: unknown): Node[] {
   if (value == null || value === false || value === true) return [];
-  if (Array.isArray(value)) return value.flatMap(toNodes);
-  if (value instanceof Node) return [value];
-  return [document.createTextNode(String(value))];
+  if (Array.isArray(value)) return value.flatMap((v) => toNodes(ctx, v));
+  if (value instanceof ctx.Node) return [value as Node];
+  return [ctx.doc.createTextNode(String(value))];
 }
 
-function applyProps(el: HTMLElement, props: Props): void {
+function applyProps(ctx: Ctx, el: HTMLElement, props: Props): void {
   for (const key in props) {
     const value = props[key];
     if (key === "children") continue;
     if (isEventProp(key)) el.addEventListener(key.slice(2).toLowerCase(), value);
-    else if (typeof value === "function") effect(() => setProp(el, key, value()));
+    else if (typeof value === "function") effect(ctx, () => setProp(el, key, value()));
     else setProp(el, key, value);
   }
 }
 
-export function For(props: Props): any {
+export function For(ctx: Ctx, props: Props): any {
   const each = props.each as () => unknown[];
   const render = props.children as (item: unknown, index: number) => Node;
   const keyOf = (props.key as (item: unknown, index: number) => unknown) || ((item: unknown) => item);
@@ -289,28 +290,28 @@ export function For(props: Props): any {
   let start: Node | undefined;
   if (as != null) {
     const tag = typeof as === "string" ? as : "div";
-    box = claim(tag) || document.createElement(tag);
+    box = claim(ctx, tag) || ctx.doc.createElement(tag);
     if (typeof as !== "string") box.style.display = "contents";
-  } else if (hydrating && cursor && cursor.nodeType === 8) {
-    start = cursor;
-    cursor = cursor.nextSibling;
+  } else if (ctx.hydrating && ctx.cursor && ctx.cursor.nodeType === 8) {
+    start = ctx.cursor;
+    ctx.cursor = ctx.cursor.nextSibling;
     box = start.parentNode;
   } else {
-    box = document.createDocumentFragment();
-    start = document.createComment("for");
-    box.append(start, document.createComment("/for"));
+    box = ctx.doc.createDocumentFragment();
+    start = ctx.doc.createComment("for");
+    box.append(start, ctx.doc.createComment("/for"));
   }
 
   let firstRun = true;
   let prevItems: unknown[] | null = null;
-  effect(() => {
+  effect(ctx, () => {
     const items = each() || [];
 
-    if (firstRun && hydrating) {
+    if (firstRun && ctx.hydrating) {
       firstRun = false;
-      withCursor(as != null ? box.firstChild : start!.nextSibling, () => {
+      withCursor(ctx, as != null ? box.firstChild : start!.nextSibling, () => {
         for (let i = 0; i < items.length; i++) map.set(keyOf(items[i], i), render(items[i], i));
-        if (as == null && cursor && cursor.nodeType === 8) cursor = cursor.nextSibling;
+        if (as == null && ctx.cursor && ctx.cursor.nodeType === 8) ctx.cursor = ctx.cursor.nextSibling;
       });
       prevItems = items;
       return;
@@ -339,49 +340,47 @@ export function For(props: Props): any {
   if (as == null) return box;
   const { each: _e, children: _c, key: _k, as: _a, ...rest } = props;
   if (typeof as === "string") {
-    applyProps(box, rest);
+    applyProps(ctx, box, rest);
     return box;
   }
-  return h(as, rest, box);
+  return h(ctx, as, rest, box);
 }
 
-export function Fragment(props: Props): DocumentFragment {
-  const frag = document.createDocumentFragment();
-  appendChild(frag, props.children);
+export function Fragment(ctx: Ctx, props: Props): DocumentFragment {
+  const frag = ctx.doc.createDocumentFragment();
+  appendChild(ctx, frag, props.children);
   return frag;
 }
 
-let pendingHead: Element[] = [];
-
-export function Head(props: Props): DocumentFragment {
-  const frag = document.createDocumentFragment();
-  buildFresh(() => appendChild(frag, props.children));
-  for (const node of [...frag.childNodes]) if (node.nodeType === Node.ELEMENT_NODE) pendingHead.push(node as Element);
-  return document.createDocumentFragment();
+export function Head(ctx: Ctx, props: Props): DocumentFragment {
+  const frag = ctx.doc.createDocumentFragment();
+  buildFresh(ctx, () => appendChild(ctx, frag, props.children));
+  for (const node of [...frag.childNodes]) if (node.nodeType === 1) ctx.pendingHead.push(node as Element);
+  return ctx.doc.createDocumentFragment();
 }
 
-export function clearHead(): void {
-  pendingHead = [];
-  for (const n of document.head.querySelectorAll("[data-head]")) n.remove();
+export function clearHead(ctx: Ctx): void {
+  ctx.pendingHead = [];
+  for (const n of ctx.doc.head.querySelectorAll("[data-head]")) n.remove();
 }
 
-export function flushHead(): void {
-  for (let i = pendingHead.length - 1; i >= 0; i--) applyHead(pendingHead[i]!);
-  pendingHead = [];
+export function flushHead(ctx: Ctx): void {
+  for (let i = ctx.pendingHead.length - 1; i >= 0; i--) applyHead(ctx, ctx.pendingHead[i]!);
+  ctx.pendingHead = [];
 }
 
-function applyHead(node: Element): void {
+function applyHead(ctx: Ctx, node: Element): void {
   if (node.tagName === "TITLE") {
-    document.title = node.textContent || "";
+    ctx.doc.title = node.textContent || "";
     return;
   }
   const key = node.getAttribute?.("name") || node.getAttribute?.("property");
   if (key) {
     const attr = node.getAttribute("name") ? "name" : "property";
-    document.head.querySelector(`meta[${attr}="${key}"]`)?.remove();
+    ctx.doc.head.querySelector(`meta[${attr}="${key}"]`)?.remove();
   }
   node.setAttribute("data-head", "");
-  document.head.appendChild(node);
+  ctx.doc.head.appendChild(node);
 }
 
 export { toNodes, applyProps };

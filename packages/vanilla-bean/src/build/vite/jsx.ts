@@ -5,12 +5,11 @@ import signals from "../babel/signals.ts";
 import thunkPlugin from "../babel/jsx-thunk.ts";
 import directives from "../babel/directives.ts";
 import autoJsxRuntime from "../babel/auto-runtime.ts";
+import ctxThread from "../babel/ctx.ts";
 import type { Ctx } from "./index.ts";
 
-// TODO: reduce regex and clean up types
 const jsxTransform = (jsxTransformPkg as any).default ?? jsxTransformPkg;
 const tsTransform = (tsTransformPkg as any).default ?? tsTransformPkg;
-
 const DIRECTIVE = /^\s*(?:\/\/[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*["']use (?:server|client|static)["']/;
 
 export function jsxPlugin(ctx: Ctx): any {
@@ -33,6 +32,7 @@ export function jsxPlugin(ctx: Ctx): any {
         [directives, { server: ctx.ssrBuild, browser }],
         [jsxTransform, { runtime: "classic", pragma: "h", pragmaFrag: "Fragment" }],
         [autoJsxRuntime, { source: "vanilla-bean" }],
+        ctxThread,
       ];
 
       if (ts) plugins.unshift([tsTransform, { isTSX: /\.tsx$/.test(file), allowDeclareFields: true }]);

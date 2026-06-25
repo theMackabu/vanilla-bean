@@ -20,27 +20,12 @@ export async function renderRouteToHTML(
     request,
   }: { keepBody?: boolean; origin?: string; request?: Request } = {},
 ): Promise<string> {
-  const saved: Record<string, unknown> = {};
-  const g = globalThis as any;
-  const swap = (k: string, v: unknown) => ((saved[k] = g[k]), (g[k] = v));
   const { document, Node } = parseHTML(template);
-  swap("document", document);
-  swap("Node", Node);
-  swap("location", new URL(route, origin));
-  swap("history", { pushState() {}, replaceState() {} });
-  swap("fetch", () => new Promise(() => {}));
-  swap("setInterval", () => 0);
-  swap("requestAnimationFrame", () => 0);
-  fw.enterRequest?.(request ?? new Request(new URL(route, origin)));
-
-  try {
-    await fw.renderRouteToDocument(route);
-    if (!keepBody) document.getElementById("root")?.replaceChildren();
-    return "<!doctype html>\n" + document.documentElement.outerHTML;
-  } finally {
-    fw.exitRequest?.();
-    for (const k in saved) saved[k] === undefined ? delete g[k] : (g[k] = saved[k]);
-  }
+  const url = new URL(route, origin);
+  const ctx = fw.makeCtx(document, Node, { url, request: request ?? new Request(url) });
+  await fw.renderRouteToDocument(ctx, route);
+  if (!keepBody) document.getElementById("root")?.replaceChildren();
+  return "<!doctype html>\n" + document.documentElement.outerHTML;
 }
 
 export async function resolveStatics(fw: any, template: string): Promise<string> {
@@ -78,6 +63,7 @@ export async function prerender({
   const rows: string[] = [];
   try {
     const fw: any = await server.ssrLoadModule("vanilla-bean");
+    fw.installTimerGuard?.("warn");
     const tmpl = await resolveStatics(fw, template);
     const routes = Object.keys(fw.routes).sort();
     const relOf = (r: string) => (r === "/" ? "index.html" : path.join(r.replace(/^\//, ""), "index.html"));
@@ -90,9 +76,7 @@ export async function prerender({
         html = await renderRouteToHTML(fw, tmpl, route);
       } catch (e) {
         if (fw.isRedirect?.(e)) {
-          console.log(
-            `  ${c.yellow("○")} ${c.dim("ssg")} ${c.bold(route.padEnd(routePad))}  ${c.gray("→ skipped (redirects per request)")}`,
-          );
+          console.log(`  ${c.yellow("○")} ${c.dim("ssg")} ${c.bold(route.padEnd(routePad))}  ${c.gray("→ skipped")}`);
           continue;
         }
         throw e;

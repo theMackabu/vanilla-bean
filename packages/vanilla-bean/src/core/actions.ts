@@ -1,3 +1,5 @@
+import type { Ctx } from "./ctx.ts";
+
 type ActionFn = (...args: unknown[]) => unknown;
 
 const registry = new Map<string, ActionFn>();
@@ -11,10 +13,10 @@ export function hasAction(id: string): boolean {
   return registry.has(id);
 }
 
-export async function runAction(id: string, args?: unknown[]): Promise<unknown> {
+export async function runAction(ctx: Ctx, id: string, args?: unknown[]): Promise<unknown> {
   const fn = registry.get(id);
   if (!fn) throw new Error("unknown action: " + id);
-  return fn(...(args || []));
+  return fn(ctx, ...(args || []));
 }
 
 export function __action(id: string): (...args: unknown[]) => Promise<unknown> {

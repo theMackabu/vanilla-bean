@@ -1,4 +1,4 @@
-import { effect, disposeChildren, enterServer, exitServer, trackServer } from "./reactive.ts";
+import { effect, disposeChildren, trackServer } from "./reactive.ts";
 
 export type Props = Record<string, any> & { children?: unknown };
 
@@ -10,11 +10,6 @@ export type Component = {
 };
 
 type Thunk = { (): unknown; dyn?: boolean };
-let serverFetch: typeof fetch | null = null;
-
-export function setServerFetch(fn: typeof fetch): void {
-  serverFetch = fn;
-}
 
 const isEventProp = (key: string): boolean => /^on[A-Z]/.test(key);
 export const __dyn = (fn: Thunk): Thunk => ((fn.dyn = true), fn);
@@ -118,16 +113,7 @@ export function h(tag: string | Component, props: Props | null, ...children: unk
 
     if (import.meta.env?.SSR && mode === "server") {
       const w = islandWrapper("server", tag.__key);
-      const savedFetch = globalThis.fetch;
-      if (serverFetch) globalThis.fetch = serverFetch;
-      enterServer();
-      let out: unknown;
-      try {
-        out = tag(p);
-      } finally {
-        exitServer();
-        globalThis.fetch = savedFetch;
-      }
+      const out: unknown = tag(p);
       if (out && typeof (out as Promise<unknown>).then === "function") {
         w.setAttribute("data-fb", "");
         trackServer(

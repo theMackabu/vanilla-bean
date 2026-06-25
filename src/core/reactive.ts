@@ -72,17 +72,11 @@ export function untrackAsync(): void {
   asyncTracker = null;
 }
 
-let serverDepth = 0;
-export function enterServer(): void {
-  serverDepth++;
-}
-export function exitServer(): void {
-  serverDepth--;
-}
-
 export function trackServer(p: Promise<unknown>): void {
   asyncTracker?.add(p);
 }
+
+const isAsyncFn = (fn: unknown): boolean => (fn as any)?.constructor?.name === "AsyncFunction";
 
 export async function settle(set: Set<Promise<unknown>>): Promise<boolean> {
   let did = false;
@@ -104,6 +98,10 @@ export function effect(fn: () => unknown): Effect {
     disposed: false,
     execute() {
       if (eff.disposed) return;
+      if (import.meta.env?.SSR && isAsyncFn(fn)) {
+        if (boundary && boundary.pending) boundary.pending(boundary.pending() + 1);
+        return;
+      }
       cleanup(eff);
       effectStack.push(eff);
       const b = boundary;
@@ -115,10 +113,9 @@ export function effect(fn: () => unknown): Effect {
       }
       if (result && typeof (result as Promise<unknown>).then === "function") {
         if (b && b.pending) b.pending(b.pending() + 1);
-        const p = Promise.resolve(result)
+        Promise.resolve(result)
           .catch((err) => (b && b.fail ? b.fail(err) : console.error(err)))
           .finally(() => b && b.pending && b.pending(b.pending() - 1));
-        if (asyncTracker && serverDepth > 0) asyncTracker.add(p);
       }
       return result;
     },

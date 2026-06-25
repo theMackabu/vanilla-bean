@@ -18,10 +18,8 @@ import {
   trackAsync,
   settle,
   untrackAsync,
-  setServerFetch,
 } from "../index.ts";
 
-setServerFetch(globalThis.fetch);
 const RENDER_TIMEOUT = Number(process.env.RENDER_TIMEOUT) || 5000;
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -56,7 +54,6 @@ function enterRenderGlobals(document: Document, Node: unknown, url: URL): () => 
   swap("Node", Node);
   swap("location", url);
   swap("history", { pushState() {}, replaceState() {} });
-  swap("fetch", () => new Promise(() => {}));
   swap("setInterval", () => 0);
   swap("requestAnimationFrame", () => 0);
   return () => {

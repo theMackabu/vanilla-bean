@@ -1,6 +1,10 @@
 import path from "node:path";
 
-const MODES: Record<string, string> = { "use client": "client", "use static": "static", "use server": "server" };
+const MODES: Record<string, string> = {
+  "use client": "client",
+  "use static": "static",
+  "use server": "server",
+};
 
 function hashKey(str: string): string {
   let h = 5381;
@@ -68,9 +72,20 @@ export default function directives({ types: t }: any, opts: any = {}): any {
     return found;
   };
 
+  const wrappedByDirective = (p: any) =>
+    p.parentPath?.isCallExpression?.() &&
+    t.isIdentifier(p.parentPath.node.callee) &&
+    (p.parentPath.node.callee.name === "__mark" || p.parentPath.node.callee.name === "__static");
+
   function handleFn(p: any, state: any): void {
     const n = p.node;
     const d = dirOf(n);
+    const mode0 = d ? MODES[d.value.value] : state.fileMode;
+    if (n.async && mode0 !== "server" && !wrappedByDirective(p) && containsJSX(p)) {
+      throw p.buildCodeFrameError(
+        'an async component must be marked "use server", a client cannot render an async component (it returns a Promise, not a node)',
+      );
+    }
     if (!d) return;
     n.body.directives = n.body.directives.filter((x: any) => x !== d);
 

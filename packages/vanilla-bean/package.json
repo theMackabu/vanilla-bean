@@ -1,6 +1,6 @@
 {
   "name": "vanilla-bean",
-  "version": "0.0.1-rc.10",
+  "version": "0.0.2",
   "type": "module",
   "description": "Tiny framework with signals, hydration, and streaming SSR, built for Ant.",
   "license": "MIT",

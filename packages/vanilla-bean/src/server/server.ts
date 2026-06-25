@@ -85,6 +85,7 @@ function settleCapped(tracker: Set<Promise<unknown>>): Promise<boolean> {
 }
 
 const enc = new TextEncoder();
+const NAV_MIME = "application/vnd.vanilla-bean.nav+json";
 
 function renderStream(key: string, status: number): ReadableStream {
   return new ReadableStream({
@@ -140,6 +141,27 @@ async function streamRoute(
     restore();
     controller.close();
   }
+}
+
+function renderNav(key: string): Promise<{ status: number; islands: Record<string, string> }> {
+  return withLock(async () => {
+    const { document, Node } = parseHTML(template);
+    const url = new URL("http://localhost" + key);
+    const restore = enterRenderGlobals(document as unknown as Document, Node, url);
+    const tracker = trackAsync();
+    try {
+      await renderRouteToDocument(url.pathname);
+      await settleCapped(tracker);
+      const islands: Record<string, string> = {};
+      for (const el of (document as unknown as Document).querySelectorAll('island[data-mode="server"][data-key]')) {
+        islands[el.getAttribute("data-key")!] = el.innerHTML;
+      }
+      return { status: matchRoute(url.pathname) ? 200 : 404, islands };
+    } finally {
+      untrackAsync();
+      restore();
+    }
+  });
 }
 
 const TYPES: Record<string, string> = {
@@ -256,6 +278,14 @@ app.get("*", async ({ request }: any) => {
   const url = new URL(request.url);
   if (path.extname(url.pathname)) return new Response("Not found", { status: 404 });
   const key = url.pathname + url.search;
+
+  if ((request.headers.get("accept") || "").includes(NAV_MIME)) {
+    const payload = await renderNav(key);
+    return new Response(JSON.stringify(payload), {
+      status: payload.status,
+      headers: { "content-type": NAV_MIME },
+    });
+  }
 
   const hit = pageCache.get(key);
   if (hit) {

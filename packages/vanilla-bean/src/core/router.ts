@@ -1,4 +1,4 @@
-import { h, collectAdopt, clearHead, flushHead, setServerIslandContent, withCursor, type Component } from "./dom.ts";
+import { h, collectAdopt, clearHead, flushHead, withCursor, type Component } from "./dom.ts";
 import { ErrorBoundary } from "./suspense.ts";
 import { makeSignal } from "./reactive.ts";
 
@@ -318,56 +318,44 @@ function onLinkClick(e: MouseEvent): void {
 async function go(href: string, push: boolean): Promise<void> {
   const url = new URL(href, location.href);
   const chain = await loadChain(url.pathname);
-  let serverIslands: Map<string, string> | null = null;
-
-  if (booted && chain.serverRoute) {
-    try {
-      serverIslands = await fetchServerIslands(url);
-    } catch {
-      location.href = url.pathname + url.search + url.hash;
-      return;
-    }
-  }
+  const navPromise = booted && chain.serverRoute ? fetchNav(url) : null;
 
   const apply = () => {
-    if (serverIslands) setServerIslandContent(serverIslands);
-    try {
-      if (push) history.pushState({}, "", url.pathname + url.search + url.hash);
-      loc(snapshot());
-      clearHead();
-      if (!booted) hydrateBoot(chain, url.pathname);
-      else swap(chain, url.pathname);
-      flushHead();
-    } finally {
-      if (serverIslands) setServerIslandContent(null);
-    }
+    if (push) history.pushState({}, "", url.pathname + url.search + url.hash);
+    loc(snapshot());
+    clearHead();
+    if (!booted) hydrateBoot(chain, url.pathname);
+    else swap(chain, url.pathname);
+    flushHead();
   };
 
   if (options.transitions && (document as any).startViewTransition) (document as any).startViewTransition(apply);
   else apply();
+
+  if (navPromise) {
+    const target = url.pathname + url.search;
+    try {
+      const islands = await navPromise;
+      if (location.pathname + location.search === target) fillServerIslands(islands);
+    } catch {
+      location.href = url.pathname + url.search + url.hash;
+    }
+  }
 }
 
-async function fetchServerIslands(url: URL): Promise<Map<string, string>> {
-  const res = await fetch(url.pathname + url.search, { headers: { accept: "text/html" } });
-  const html = await res.text();
-  const doc = new DOMParser().parseFromString(html, "text/html");
-
-  for (const tpl of [...doc.querySelectorAll<HTMLTemplateElement>("template[data-vb-fill]")]) {
-    const id = tpl.getAttribute("data-vb-fill");
-    if (!id) continue;
-    const slot = doc.querySelector(`[data-vb="${id}"]`);
-    if (!slot) continue;
-    slot.replaceChildren(tpl.content.cloneNode(true));
-    slot.removeAttribute("data-fb");
-    tpl.remove();
+function fillServerIslands(islands: Map<string, string>): void {
+  for (const [key, html] of islands) {
+    const el = document.querySelector(`island[data-mode="server"][data-key="${key}"]`);
+    if (el) el.innerHTML = html;
   }
+}
 
-  const out = new Map<string, string>();
-  for (const island of [...doc.querySelectorAll<HTMLElement>('island[data-mode="server"][data-key]')]) {
-    out.set(island.getAttribute("data-key")!, island.innerHTML);
-  }
-
-  return out;
+const NAV_MIME = "application/vnd.vanilla-bean.nav+json";
+async function fetchNav(url: URL): Promise<Map<string, string>> {
+  const res = await fetch(url.pathname + url.search, { headers: { accept: NAV_MIME } });
+  if (!res.ok) throw new Error("nav " + res.status);
+  const payload = (await res.json()) as { islands?: Record<string, string> };
+  return new Map(Object.entries(payload.islands || {}));
 }
 
 export function navigate(href: string, { replace = false }: { replace?: boolean } = {}): void {

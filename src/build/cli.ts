@@ -2,7 +2,7 @@
 
 import path from "node:path";
 import fs from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { build, createServer, preview } from "vite";
 import framework from "./vite/index.ts";
@@ -147,9 +147,96 @@ function buildIsStale(): boolean {
   return srcAt > builtAt;
 }
 
+function currentRuntime(): string {
+  const g = globalThis as any;
+  if (g.Ant || process.versions.ant) return "ant";
+  if (g.Bun || process.versions.bun) return "bun";
+  if (g.Deno || process.versions.deno) return "deno";
+  return "node";
+}
+
+function hasBin(bin: string): boolean {
+  try {
+    execSync((process.platform === "win32" ? "where " : "command -v ") + bin, { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function pickRuntime(site: any): string {
+  const want = process.env.VANILLA_RUNTIME || site.runtime;
+  if (want) return want;
+  const cur = currentRuntime();
+  if (cur !== "node") return cur;
+  for (const rt of ["ant", "bun", "deno"]) if (hasBin(rt)) return rt;
+  return "node";
+}
+
+function launcher(rt: string, port: string): { cmd: string; args: string[] } | null {
+  switch (rt) {
+    case "node":
+      return null;
+    case "ant":
+      return { cmd: "ant", args: [".vanilla"] };
+    case "bun":
+      return { cmd: "bun", args: [".vanilla/index.js"] };
+    case "deno":
+      return { cmd: "deno", args: ["serve", "-A", "--port", port, ".vanilla/index.js"] };
+    default:
+      return { cmd: rt, args: [".vanilla/index.js"] };
+  }
+}
+
+function nodeToWebRequest(req: any): Promise<Request> {
+  const url = "http://" + (req.headers.host || "localhost") + req.url;
+  const headers = new Headers();
+  for (const [k, v] of Object.entries(req.headers))
+    if (v != null) headers.set(k, Array.isArray(v) ? v.join(",") : (v as string));
+  const method = req.method || "GET";
+  if (method === "GET" || method === "HEAD") return Promise.resolve(new Request(url, { method, headers }));
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (ch: Buffer) => chunks.push(ch));
+    req.on("end", () =>
+      resolve(new Request(url, { method, headers, body: Buffer.concat(chunks), duplex: "half" } as any)),
+    );
+  });
+}
+
+async function serveNode(): Promise<void> {
+  const { createServer } = await import("node:http");
+  const mod = await import(pathToFileURL(path.join(root, ".vanilla/index.js")).href);
+  const { fetch: handler, port } = mod.default;
+  createServer(async (req: any, res: any) => {
+    try {
+      const response: Response = await handler(await nodeToWebRequest(req), {});
+      res.statusCode = response.status;
+      response.headers.forEach((v: string, k: string) => res.setHeader(k, v));
+      if (response.body) {
+        const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          res.write(value);
+        }
+        res.end();
+      } else {
+        res.end(Buffer.from(await response.arrayBuffer()));
+      }
+    } catch (e) {
+      res.statusCode = 500;
+      res.end(String(e));
+    }
+  }).listen(Number(port));
+}
+
 async function startCmd(site: any): Promise<void> {
   if (buildIsStale()) await buildCmd(site);
-  const child = spawn("ant", [".vanilla"], { stdio: "inherit", env: { ...process.env } });
+  const rt = pickRuntime(site);
+  const spec = launcher(rt, process.env.PORT || "9454");
+  if (!spec) return serveNode();
+  const child = spawn(spec.cmd, spec.args, { stdio: "inherit", env: { ...process.env } });
   let killed = false;
   const stop = () => {
     if (killed) return;
@@ -162,7 +249,7 @@ async function startCmd(site: any): Promise<void> {
   process.on("exit", stop);
   child.on("exit", (code) => process.exit(code ?? 0));
   child.on("error", (e) => {
-    console.error(`  ${c.red("✗")} could not launch ant: ${e.message}`);
+    console.error(`  ${c.red("✗")} could not launch ${rt}: ${e.message}`);
     process.exit(1);
   });
 }

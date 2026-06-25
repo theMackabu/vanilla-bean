@@ -250,8 +250,13 @@ function fetch(request: Request, env: any): Response | Promise<Response> {
   return app.fetch(request);
 }
 
-console.log(
-  brand("start", `http://localhost:${PORT}`).replace(/\n$/, "") +
-    c.dim(`  (ant ${(globalThis as any).Ant?.version ?? "?"})`),
-);
+const runtimeTag = (() => {
+  const g = globalThis as any;
+  if (g.Ant?.version) return `ant ${g.Ant.version}`;
+  if (g.Bun?.version) return `bun ${g.Bun.version}`;
+  if (g.Deno?.version?.deno) return `deno ${g.Deno.version.deno}`;
+  return `node ${process.versions.node}`;
+})();
+
+console.log(brand("start", `http://localhost:${PORT}`).replace(/\n$/, "") + c.dim(`  (${runtimeTag})`));
 export default { fetch, port: PORT };

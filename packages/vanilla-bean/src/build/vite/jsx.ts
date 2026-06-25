@@ -7,8 +7,11 @@ import directives from "../babel/directives.ts";
 import autoJsxRuntime from "../babel/auto-runtime.ts";
 import type { Ctx } from "./index.ts";
 
+// TODO: reduce regex and clean up types
 const jsxTransform = (jsxTransformPkg as any).default ?? jsxTransformPkg;
 const tsTransform = (tsTransformPkg as any).default ?? tsTransformPkg;
+
+const DIRECTIVE = /^\s*(?:\/\/[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*["']use (?:server|client|static)["']/;
 
 export function jsxPlugin(ctx: Ctx): any {
   return {
@@ -16,9 +19,14 @@ export function jsxPlugin(ctx: Ctx): any {
     enforce: "pre",
     async transform(code: string, id: string, opts: any) {
       const file = id.split("?")[0];
-      if (!/\.[jt]sx$/.test(file)) return null;
-      const ts = /\.tsx$/.test(file);
+      const jsx = /\.[jt]sx$/.test(file);
+
+      const directed = !jsx && /\.[jt]s$/.test(file) && !file.includes("/node_modules/") && DIRECTIVE.test(code);
+      if (!jsx && !directed) return null;
+
+      const ts = /\.tsx?$/.test(file);
       const browser = !ctx.ssrBuild && !opts?.ssr;
+
       const plugins: any[] = [
         signals,
         thunkPlugin,
@@ -26,7 +34,9 @@ export function jsxPlugin(ctx: Ctx): any {
         [jsxTransform, { runtime: "classic", pragma: "h", pragmaFrag: "Fragment" }],
         [autoJsxRuntime, { source: "vanilla-bean" }],
       ];
-      if (ts) plugins.unshift([tsTransform, { isTSX: true, allowDeclareFields: true }]);
+
+      if (ts) plugins.unshift([tsTransform, { isTSX: /\.tsx$/.test(file), allowDeclareFields: true }]);
+
       const result = await transformAsync(code, {
         filename: id,
         sourceMaps: true,
@@ -34,6 +44,7 @@ export function jsxPlugin(ctx: Ctx): any {
         configFile: false,
         plugins,
       });
+
       return { code: result!.code, map: result!.map };
     },
   };

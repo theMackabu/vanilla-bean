@@ -1,5 +1,6 @@
 import { makeSignal, effect, withBoundary, type Boundary } from "./reactive.ts";
 import { claim, withCursor, buildFresh, type Props } from "./dom.ts";
+import { isRedirect } from "./request.ts";
 
 type Render = () => unknown;
 
@@ -69,6 +70,7 @@ function build(ctx: Boundary, render: Render, error: (e: unknown) => void): Node
   try {
     return toNodes(withBoundary(ctx, render));
   } catch (e) {
+    if (isRedirect(e)) throw e;
     error(e);
     return [];
   }

@@ -1,5 +1,5 @@
 import { Head, signal } from "vanilla-bean";
-import { bump } from "../../actions/demo.jsx";
+import { bump } from "../../actions/demo";
 
 export default function ActionDemo() {
   const result = signal(null);

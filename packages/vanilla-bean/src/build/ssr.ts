@@ -14,7 +14,11 @@ export async function renderRouteToHTML(
   fw: any,
   template: string,
   route: string,
-  { keepBody = true, origin = "http://localhost" }: { keepBody?: boolean; origin?: string } = {},
+  {
+    keepBody = true,
+    origin = "http://localhost",
+    request,
+  }: { keepBody?: boolean; origin?: string; request?: Request } = {},
 ): Promise<string> {
   const saved: Record<string, unknown> = {};
   const g = globalThis as any;
@@ -27,12 +31,14 @@ export async function renderRouteToHTML(
   swap("fetch", () => new Promise(() => {}));
   swap("setInterval", () => 0);
   swap("requestAnimationFrame", () => 0);
+  fw.enterRequest?.(request ?? new Request(new URL(route, origin)));
 
   try {
     await fw.renderRouteToDocument(route);
     if (!keepBody) document.getElementById("root")?.replaceChildren();
     return "<!doctype html>\n" + document.documentElement.outerHTML;
   } finally {
+    fw.exitRequest?.();
     for (const k in saved) saved[k] === undefined ? delete g[k] : (g[k] = saved[k]);
   }
 }
@@ -79,7 +85,18 @@ export async function prerender({
     const pathPad = Math.max(...routes.map((r) => relOf(r).length));
     for (const route of routes) {
       const t = Date.now();
-      const html = await renderRouteToHTML(fw, tmpl, route);
+      let html: string;
+      try {
+        html = await renderRouteToHTML(fw, tmpl, route);
+      } catch (e) {
+        if (fw.isRedirect?.(e)) {
+          console.log(
+            `  ${c.yellow("○")} ${c.dim("ssg")} ${c.bold(route.padEnd(routePad))}  ${c.gray("→ skipped (redirects per request)")}`,
+          );
+          continue;
+        }
+        throw e;
+      }
       const outRoute = route === "/" ? distDir : path.join(distDir, route);
       fs.mkdirSync(outRoute, { recursive: true });
       fs.writeFileSync(path.join(outRoute, "index.html"), html);

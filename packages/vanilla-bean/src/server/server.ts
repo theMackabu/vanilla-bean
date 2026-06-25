@@ -19,6 +19,11 @@ import {
   trackAsync,
   settle,
   untrackAsync,
+  enterRequest,
+  exitRequest,
+  getResponseHeaders,
+  getRedirect,
+  isRedirect,
 } from "vanilla-bean";
 
 const RENDER_TIMEOUT = Number(process.env.RENDER_TIMEOUT) || 5000;
@@ -40,11 +45,31 @@ function injectStatics(html: string, data: Record<string, unknown>): string {
   return html.replace("</body>", `<script type="application/json" id="_vanilla_static">${json}</script></body>`);
 }
 
-let queue: Promise<unknown> = Promise.resolve();
-function withLock<T>(fn: () => Promise<T>): Promise<T> {
-  const result = queue.then(fn, fn) as Promise<T>;
-  queue = result.catch(() => {});
-  return result;
+let lockTail: Promise<void> = Promise.resolve();
+function acquire(): Promise<() => void> {
+  let release!: () => void;
+  const held = new Promise<void>((r) => (release = r));
+  const prev = lockTail;
+  lockTail = held;
+  return prev.then(() => release);
+}
+
+async function withLock<T>(fn: () => Promise<T>): Promise<T> {
+  const release = await acquire();
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
+function withResHeaders(base: Record<string, string>, res: Headers | null): Headers {
+  const h = new Headers(base);
+  if (res) {
+    for (const cookie of res.getSetCookie?.() ?? []) h.append("set-cookie", cookie);
+    for (const [k, v] of res) if (k !== "set-cookie") h.set(k, v);
+  }
+  return h;
 }
 
 function enterRenderGlobals(document: Document, Node: unknown, url: URL): () => void {
@@ -87,77 +112,110 @@ function settleCapped(tracker: Set<Promise<unknown>>): Promise<boolean> {
 const enc = new TextEncoder();
 const NAV_MIME = "application/vnd.vanilla-bean.nav+json";
 
-function renderStream(key: string, status: number, origin: string): ReadableStream {
-  return new ReadableStream({ start: (controller) => withLock(() => streamRoute(key, status, origin, controller)) });
-}
+type HtmlOut =
+  | { kind: "redirect"; redirect: { url: string; status: number }; res: Headers | null }
+  | { kind: "html"; html: string; res: Headers | null }
+  | { kind: "stream"; stream: ReadableStream; res: Headers | null };
 
-async function streamRoute(
-  key: string,
-  status: number,
-  origin: string,
-  controller: ReadableStreamDefaultController<Uint8Array>,
-): Promise<void> {
-  const send = (s: string) => controller.enqueue(enc.encode(s));
-
-  const cached = pageCache.get(key);
-  if (cached) {
-    send(cached.html);
-    controller.close();
-    return;
-  }
-
+async function renderHtml(key: string, status: number, origin: string, request: Request): Promise<HtmlOut> {
+  const release = await acquire();
   const { document, Node } = parseHTML(template);
   const url = new URL(key, origin);
   const restore = enterRenderGlobals(document as unknown as Document, Node, url);
+  enterRequest(request);
   const tracker = trackAsync();
-  try {
-    const rendered = await renderRouteToDocument(url.pathname);
-    const slots = tagBoundaries(document as unknown as Document);
+  let handed = false;
+  const finish = (): void => {
+    untrackAsync();
+    exitRequest();
+    restore();
+    release();
+  };
 
+  try {
+    let rendered: { cache: boolean } | undefined;
+    try {
+      rendered = await renderRouteToDocument(url.pathname);
+    } catch (e) {
+      if (!isRedirect(e)) throw e;
+    }
+    const res = getResponseHeaders();
+
+    const redirect = getRedirect();
+    if (redirect) {
+      finish();
+      return { kind: "redirect", redirect, res };
+    }
+
+    const slots = tagBoundaries(document as unknown as Document);
     if (!slots.length) {
       const html = "<!doctype html>\n" + document.documentElement.outerHTML;
-      send(html);
-      if (rendered.cache) cachePage(key, html, status);
-      return;
+      if (rendered?.cache) cachePage(key, html, status);
+      finish();
+      return { kind: "html", html, res };
     }
 
-    const [shell, tail] = splitAtBody(document as unknown as Document);
-    const chunks = [shell + fillRuntime];
-    send(chunks[0]!);
-    const settled = await settleCapped(tracker);
-
-    for (const slot of slots) {
-      if (slot.hasAttribute("data-fb")) continue;
-      const chunk = fillChunk(slot.getAttribute("data-vb")!, slot.innerHTML);
-      chunks.push(chunk);
-      send(chunk);
-    }
-    chunks.push(tail);
-    send(tail);
-    if (settled && rendered.cache) cachePage(key, chunks.join(""), status);
-  } finally {
-    untrackAsync();
-    restore();
-    controller.close();
+    handed = true;
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const send = (s: string) => controller.enqueue(enc.encode(s));
+        try {
+          const [shell, tail] = splitAtBody(document as unknown as Document);
+          send(shell + fillRuntime);
+          await settleCapped(tracker);
+          const late = getRedirect();
+          if (late) {
+            send(`<script>location.replace(${JSON.stringify(late.url)})</script>`);
+          } else {
+            for (const slot of slots) {
+              if (slot.hasAttribute("data-fb")) continue;
+              send(fillChunk(slot.getAttribute("data-vb")!, slot.innerHTML));
+            }
+          }
+          send(tail);
+        } finally {
+          finish();
+          controller.close();
+        }
+      },
+    });
+    return { kind: "stream", stream, res };
+  } catch (e) {
+    if (!handed) finish();
+    throw e;
   }
 }
 
-function renderNav(key: string, origin: string): Promise<{ status: number; islands: Record<string, string> }> {
+type NavOut = { status: number; body: Record<string, unknown>; res: Headers | null };
+
+function renderNav(key: string, origin: string, request: Request): Promise<NavOut> {
   return withLock(async () => {
     const { document, Node } = parseHTML(template);
     const url = new URL(key, origin);
     const restore = enterRenderGlobals(document as unknown as Document, Node, url);
+    enterRequest(request);
     const tracker = trackAsync();
     try {
-      await renderRouteToDocument(url.pathname);
-      await settleCapped(tracker);
+      try {
+        await renderRouteToDocument(url.pathname);
+      } catch (e) {
+        if (!isRedirect(e)) throw e;
+      }
+      let redirect = getRedirect();
+      if (!redirect) {
+        await settleCapped(tracker);
+        redirect = getRedirect();
+      }
+      const res = getResponseHeaders();
+      if (redirect) return { status: 200, body: { redirect: redirect.url }, res };
       const islands: Record<string, string> = {};
       for (const el of (document as unknown as Document).querySelectorAll('island[data-mode="server"][data-key]')) {
         islands[el.getAttribute("data-key")!] = el.innerHTML;
       }
-      return { status: matchRoute(url.pathname) ? 200 : 404, islands };
+      return { status: matchRoute(url.pathname) ? 200 : 404, body: { islands }, res };
     } finally {
       untrackAsync();
+      exitRequest();
       restore();
     }
   });
@@ -255,18 +313,33 @@ app.get("/_vanilla/*", async ({ params, request }: any) =>
   serveAsset(params["*"], request.headers.get("accept-encoding") || ""),
 );
 
-app.post("/_action", async ({ body, set }: any) => {
-  const { id, args } = typeof body === "string" ? JSON.parse(body) : body || {};
+const JSON_HEADERS = { "content-type": "application/json" };
+
+app.post("/_vanilla/actions/:id", async ({ params, body, set, request }: any) => {
+  const id = params.id;
+  const { args } = typeof body === "string" ? JSON.parse(body) : body || {};
   if (!hasAction(id)) {
     set.status = 404;
     return { error: "unknown action" };
   }
-  try {
-    return await runAction(id, args);
-  } catch (e: any) {
-    set.status = 500;
-    return { error: String(e?.message ?? e) };
-  }
+  return withLock(async () => {
+    enterRequest(request);
+    try {
+      const result = await runAction(id, args);
+      return new Response(JSON.stringify(result ?? null), {
+        headers: withResHeaders(JSON_HEADERS, getResponseHeaders()),
+      });
+    } catch (e: any) {
+      if (isRedirect(e)) {
+        return new Response(JSON.stringify({ __redirect: e.redirect.url }), {
+          headers: withResHeaders(JSON_HEADERS, getResponseHeaders()),
+        });
+      }
+      return new Response(JSON.stringify({ error: String(e?.message ?? e) }), { status: 500, headers: JSON_HEADERS });
+    } finally {
+      exitRequest();
+    }
+  });
 });
 
 const CACHE_MAX = 5000;
@@ -279,10 +352,10 @@ app.get("*", async ({ request }: any) => {
   const key = url.pathname + url.search;
 
   if ((request.headers.get("accept") || "").includes(NAV_MIME)) {
-    const payload = await renderNav(key, url.origin);
-    return new Response(JSON.stringify(payload), {
-      status: payload.status,
-      headers: { "content-type": NAV_MIME },
+    const { status, body, res } = await renderNav(key, url.origin, request);
+    return new Response(JSON.stringify({ status, ...body }), {
+      status,
+      headers: withResHeaders({ "content-type": NAV_MIME }, res),
     });
   }
 
@@ -301,7 +374,14 @@ app.get("*", async ({ request }: any) => {
     return new Response(body as unknown as BodyInit, { status: hit.status, headers });
   }
   const status = matchRoute(url.pathname) ? 200 : 404;
-  return new Response(renderStream(key, status, url.origin), { status, headers: HTML_HEADERS });
+  const out = await renderHtml(key, status, url.origin, request);
+  const headers = withResHeaders(HTML_HEADERS, out.res);
+  if (out.kind === "redirect") {
+    headers.set("location", out.redirect.url);
+    return new Response(null, { status: out.redirect.status, headers });
+  }
+  if (out.kind === "html") return new Response(out.html, { status, headers });
+  return new Response(out.stream, { status, headers });
 });
 
 function fetch(request: Request, env: any): Response | Promise<Response> {

@@ -1,6 +1,7 @@
 import { h, claim, collectAdopt, clearHead, flushHead, withCursor, type Component } from "./dom.ts";
 import { ErrorBoundary } from "./suspense.ts";
 import { makeSignal, createOwner, runWithOwner, dispose, type Owner } from "./reactive.ts";
+import { isRedirect } from "./request.ts";
 
 type Loader = () => Promise<any>;
 
@@ -38,12 +39,12 @@ type Chain = {
   cache: boolean;
 };
 
-const pageModules = import.meta.glob("/src/pages/**/*.{jsx,tsx}");
-const layoutModules = import.meta.glob("/src/**/layout.{jsx,tsx}");
-const notFoundModules = import.meta.glob("/src/**/not-found.{jsx,tsx}");
-const errorModules = import.meta.glob("/src/**/error-page.{jsx,tsx}");
+const pageModules = import.meta.glob("/src/pages/**/*.{js,jsx,ts,tsx}");
+const layoutModules = import.meta.glob("/src/**/layout.{js,jsx,ts,tsx}");
+const notFoundModules = import.meta.glob("/src/**/not-found.{js,jsx,ts,tsx}");
+const errorModules = import.meta.glob("/src/**/error-page.{js,jsx,ts,tsx}");
 
-const SPECIAL = /\/(layout|not-found|error-page)\.[jt]sx$/;
+const SPECIAL = /\/(layout|not-found|error-page)\.[jt]sx?$/;
 const SCORE: Record<string, number> = { static: 3, dynamic: 2, catch: 1, optcatch: 0 };
 
 export const routes: Record<string, Loader> = {};
@@ -53,7 +54,7 @@ const dynamicRoutes: DynamicRoute[] = [];
 function parsePattern(file: string): Part[] {
   const rel = file
     .replace(/^\/src\/pages/, "")
-    .replace(/\.[jt]sx$/, "")
+    .replace(/\.[jt]sx?$/, "")
     .replace(/\/index$/, "");
   return rel
     .split("/")
@@ -93,14 +94,14 @@ const dirMap = (modules: Record<string, Loader>, suffix: RegExp): Record<string,
   for (const file in modules) out[file.replace(suffix, "")] = modules[file]!;
   return out;
 };
-const layoutDirs = dirMap(layoutModules, /\/layout\.[jt]sx$/);
-const notFoundDirs = dirMap(notFoundModules, /\/not-found\.[jt]sx$/);
-const errorDirs = dirMap(errorModules, /\/error-page\.[jt]sx$/);
+const layoutDirs = dirMap(layoutModules, /\/layout\.[jt]sx?$/);
+const notFoundDirs = dirMap(notFoundModules, /\/not-found\.[jt]sx?$/);
+const errorDirs = dirMap(errorModules, /\/error-page\.[jt]sx?$/);
 
 function fileToPath(file: string): string {
   const p = file
     .replace(/^\/src\/pages/, "")
-    .replace(/\.[jt]sx$/, "")
+    .replace(/\.[jt]sx?$/, "")
     .replace(/\/index$/, "");
   return p === "" ? "/" : p;
 }
@@ -326,8 +327,13 @@ async function go(href: string, push: boolean): Promise<void> {
     if (push) history.pushState({}, "", url.pathname + url.search + url.hash);
     loc(snapshot());
     clearHead();
-    if (!booted) hydrateBoot(chain, url.pathname);
-    else swap(chain, url.pathname);
+    try {
+      if (!booted) hydrateBoot(chain, url.pathname);
+      else swap(chain, url.pathname);
+    } catch (e) {
+      if (isRedirect(e)) return navigate((e as any).redirect.url, { replace: true });
+      throw e;
+    }
     flushHead();
   };
 
@@ -337,8 +343,12 @@ async function go(href: string, push: boolean): Promise<void> {
   if (navPromise) {
     const target = url.pathname + url.search;
     try {
-      const islands = await navPromise;
-      if (location.pathname + location.search === target) fillServerIslands(islands);
+      const nav = await navPromise;
+      if (nav.redirect) {
+        navigate(nav.redirect, { replace: true });
+        return;
+      }
+      if (nav.islands && location.pathname + location.search === target) fillServerIslands(nav.islands);
     } catch {
       location.href = url.pathname + url.search + url.hash;
     }
@@ -353,11 +363,12 @@ function fillServerIslands(islands: Map<string, string>): void {
 }
 
 const NAV_MIME = "application/vnd.vanilla-bean.nav+json";
-async function fetchNav(url: URL): Promise<Map<string, string>> {
+async function fetchNav(url: URL): Promise<{ islands?: Map<string, string>; redirect?: string }> {
   const res = await fetch(url.pathname + url.search, { headers: { accept: NAV_MIME } });
   if (!res.ok) throw new Error("nav " + res.status);
-  const payload = (await res.json()) as { islands?: Record<string, string> };
-  return new Map(Object.entries(payload.islands || {}));
+  const payload = (await res.json()) as { islands?: Record<string, string>; redirect?: string };
+  if (payload.redirect) return { redirect: payload.redirect };
+  return { islands: new Map(Object.entries(payload.islands || {})) };
 }
 
 export function navigate(href: string, { replace = false }: { replace?: boolean } = {}): void {

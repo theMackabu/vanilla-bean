@@ -23,6 +23,7 @@ function Counter() {
 - [Routing](#routing)
 - [Islands & directives](#islands--directives)
 - [Server actions](#server-actions)
+- [Request, cookies & redirect](#request-cookies--redirect)
 - [API routes & WebSockets](#api-routes--websockets)
 - [Data & streaming](#data--streaming)
 - [CLI](#cli)
@@ -218,6 +219,44 @@ export async function bump(by = 1) {
 import { bump } from "../actions/demo";
 const res = await bump(2); // RPC to the server
 ```
+
+(Action and page files can be `.js`/`.ts` as well — JSX is optional. A `.js` page can build DOM with `h()`, return a string, or just `redirect()`.)
+
+## Request, cookies & redirect
+
+Server components and server actions can read the incoming request — **cookies, headers, method** — and set response cookies/headers or redirect. Read it synchronously at the top (the server serializes renders, so the context is per-request).
+
+```jsx
+import { cookies, redirect } from "vanilla-bean";
+
+// an auth gate: a sync "use server" component → a real 302 on first load
+function Protected() {
+  "use server";
+  const user = cookies().get("session");
+  if (!user) redirect("/login");
+  return <p>welcome, {user}</p>;
+}
+```
+
+```js
+// src/actions/auth.js
+"use server";
+import { cookies, redirect } from "vanilla-bean";
+
+export async function login(name) {
+  cookies().set("session", name, { httpOnly: true, sameSite: "lax" });
+  redirect("/"); // from an action, the client navigates
+}
+export async function logout() {
+  cookies().delete("session");
+  redirect("/login");
+}
+```
+
+- `cookies()` — `.get(name)` reads a request cookie; `.set(name, value, opts)` / `.delete(name)` queue `Set-Cookie` on the response.
+- `getRequest()` / `headers()` — the raw `Request` / its headers.
+- `setHeader(name, value)` — set a response header.
+- `redirect(url)` — a **server component** yields a real `302` (sync) or a client redirect (mid-stream); an **action** makes the client navigate; a client navigation to a server route is resolved through the nav payload. Auth-gated routes are skipped during the static prerender.
 
 ## API routes & WebSockets
 

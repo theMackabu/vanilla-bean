@@ -1,11 +1,35 @@
 type Effect = {
   deps: Set<Set<Effect>>;
   children: Set<Effect>;
+  cleanups: Array<() => void>;
   disposed: boolean;
   asyncFn?: boolean;
   schedule?(): void;
   execute(): unknown;
 };
+
+export type Owner = { children: Set<Effect>; cleanups: Array<() => void>; disposed: boolean };
+let currentOwnerNode: Owner | null = null;
+
+export function createOwner(): Owner {
+  return { children: new Set(), cleanups: [], disposed: false };
+}
+export function runWithOwner<T>(owner: Owner | null, fn: () => T): T {
+  const prev = currentOwnerNode;
+  currentOwnerNode = owner;
+  try {
+    return fn();
+  } finally {
+    currentOwnerNode = prev;
+  }
+}
+export function onCleanup(fn: () => void): void {
+  if (currentOwnerNode && !currentOwnerNode.disposed) currentOwnerNode.cleanups.push(fn);
+}
+function runCleanups(node: { cleanups: Array<() => void> }): void {
+  for (let i = node.cleanups.length - 1; i >= 0; i--) node.cleanups[i]!();
+  node.cleanups.length = 0;
+}
 
 const effectStack: Effect[] = [];
 const pendingEffects = new Set<Effect>();
@@ -132,10 +156,11 @@ export async function settle(set: Set<Promise<unknown>>): Promise<boolean> {
 }
 
 export function effect(fn: () => unknown): Effect {
-  const parent = currentEffect();
+  const parent = currentOwnerNode;
   const eff: Effect = {
     deps: new Set(),
     children: new Set(),
+    cleanups: [],
     disposed: false,
     asyncFn: isAsyncFn(fn),
     execute() {
@@ -144,14 +169,18 @@ export function effect(fn: () => unknown): Effect {
         if (boundary && boundary.pending) boundary.pending(boundary.pending() + 1);
         return;
       }
+      runCleanups(eff);
       cleanup(eff);
       effectStack.push(eff);
+      const prevOwner = currentOwnerNode;
+      currentOwnerNode = eff;
       const b = boundary;
       let result: unknown;
       try {
         result = fn();
       } finally {
         effectStack.pop();
+        currentOwnerNode = prevOwner;
       }
       if (result && typeof (result as Promise<unknown>).then === "function") {
         if (b && b.pending) b.pending(b.pending() + 1);
@@ -167,13 +196,14 @@ export function effect(fn: () => unknown): Effect {
   return eff;
 }
 
-export function dispose(eff: Effect | null | undefined): void {
-  if (!eff || eff.disposed) return;
-  eff.disposed = true;
-  pendingEffects.delete(eff);
-  for (const child of eff.children) dispose(child);
-  eff.children.clear();
-  cleanup(eff);
+export function dispose(node: Owner | Effect | null | undefined): void {
+  if (!node || node.disposed) return;
+  node.disposed = true;
+  pendingEffects.delete(node as Effect);
+  runCleanups(node);
+  for (const child of node.children) dispose(child);
+  node.children.clear();
+  if ((node as Effect).deps) cleanup(node as Effect);
 }
 
 export function disposeChildren(eff: Effect | null | undefined): void {
@@ -186,10 +216,11 @@ export function derived<T>(fn: () => T): () => T {
   let value: T;
   let dirty = true;
   const subscribers = new Set<Effect>();
-  const parent = currentEffect();
+  const parent = currentOwnerNode;
   const computed: Effect = {
     deps: new Set(),
     children: new Set(),
+    cleanups: [],
     disposed: false,
     schedule() {
       if (computed.disposed || dirty) return;
@@ -207,14 +238,18 @@ export function derived<T>(fn: () => T): () => T {
   if (parent) parent.children.add(computed);
 
   const recompute = (): T => {
+    runCleanups(computed);
     cleanup(computed);
     effectStack.push(computed);
+    const prevOwner = currentOwnerNode;
+    currentOwnerNode = computed;
     try {
       value = fn();
       dirty = false;
       return value;
     } finally {
       effectStack.pop();
+      currentOwnerNode = prevOwner;
     }
   };
 

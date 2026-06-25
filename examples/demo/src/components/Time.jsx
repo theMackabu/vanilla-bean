@@ -1,9 +1,10 @@
-import { signal } from "vanilla-bean";
+import { signal, onCleanup } from "vanilla-bean";
 
 export default function Time() {
   "use client";
   const now = signal(new Date().toLocaleTimeString());
-  setInterval(() => now(new Date().toLocaleTimeString()), 1000);
+  const id = setInterval(() => now(new Date().toLocaleTimeString()), 1000);
+  onCleanup(() => clearInterval(id));
   return <strong>{now}</strong>;
 }
 

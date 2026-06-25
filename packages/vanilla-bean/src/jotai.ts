@@ -1,11 +1,11 @@
-import { signal, type Signal } from "vanilla-bean";
+import { signal, onCleanup, type Signal } from "vanilla-bean";
 import { getDefaultStore, type Atom, type WritableAtom } from "jotai/vanilla";
 
 type Store = ReturnType<typeof getDefaultStore>;
 
 export function useAtomValue<T>(atom: Atom<T>, store: Store = getDefaultStore()): Signal<T> {
   const value = signal(store.get(atom)) as unknown as Signal<T>;
-  store.sub(atom, () => value(store.get(atom)));
+  if (!import.meta.env?.SSR) onCleanup(store.sub(atom, () => value(store.get(atom))));
   return value;
 }
 

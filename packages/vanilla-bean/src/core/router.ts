@@ -1,6 +1,6 @@
 import { h, collectAdopt, clearHead, flushHead, withCursor, type Component } from "./dom.ts";
 import { ErrorBoundary } from "./suspense.ts";
-import { makeSignal } from "./reactive.ts";
+import { makeSignal, createOwner, runWithOwner, dispose, type Owner } from "./reactive.ts";
 
 type Loader = () => Promise<any>;
 
@@ -267,7 +267,11 @@ export async function collectStatics(): Promise<Record<string, unknown>> {
 }
 
 let rootEl: HTMLElement | null = null;
-let mounted: { Comp: Component; outlet: HTMLElement }[] = [];
+let mounted: { Comp: Component; outlet: HTMLElement; owner: Owner }[] = [];
+
+let bootOwner: Owner | null = null;
+let pageOwner: Owner | null = null;
+
 let booted = false;
 let options: { transitions?: boolean } = { transitions: false };
 
@@ -397,7 +401,8 @@ function hydrateBoot(chain: Chain, path: string): void {
     i < chain.layouts.length
       ? h(chain.layouts[i]!, null, () => build(i + 1))
       : buildPage(chain, { ...loc() }, path, reset);
-  withCursor(rootEl!.firstChild, () => build(0));
+  bootOwner = createOwner();
+  runWithOwner(bootOwner, () => withCursor(rootEl!.firstChild, () => build(0)));
   mounted = [];
 }
 
@@ -407,21 +412,32 @@ function swap(chain: Chain, path: string): void {
 
   while (k < mounted.length && k < layouts.length && mounted[k]!.Comp === layouts[k]) k++;
   if (chain.serverStart != null) k = Math.min(k, chain.serverStart);
+
+  if (bootOwner) {
+    dispose(bootOwner);
+    bootOwner = null;
+  }
+
+  dispose(pageOwner);
+  pageOwner = null;
+  for (let i = k; i < mounted.length; i++) dispose(mounted[i]!.owner);
   mounted = mounted.slice(0, k);
 
   const parentOutlet = k === 0 ? rootEl! : mounted[k - 1]!.outlet;
-  const layers: { Comp: Component; outlet: HTMLElement }[] = [];
+  const layers: { Comp: Component; outlet: HTMLElement; owner: Owner }[] = [];
   for (let i = k; i < layouts.length; i++) {
     const outlet = document.createElement("div");
     outlet.style.display = "contents";
-    layers.push({ Comp: layouts[i]!, outlet });
+    layers.push({ Comp: layouts[i]!, outlet, owner: createOwner() });
   }
 
   const reset = () => go(location.pathname + location.search + location.hash, false);
-  let child: any = buildPage(chain, { ...loc() }, path, reset);
+  pageOwner = createOwner();
+  let child: any = runWithOwner(pageOwner, () => buildPage(chain, { ...loc() }, path, reset));
   for (let i = layers.length - 1; i >= 0; i--) {
-    layers[i]!.outlet.replaceChildren(child);
-    child = h(layers[i]!.Comp, null, layers[i]!.outlet);
+    const layer = layers[i]!;
+    layer.outlet.replaceChildren(child);
+    child = runWithOwner(layer.owner, () => h(layer.Comp, null, layer.outlet));
   }
   if (k === 0) parentOutlet.replaceChildren(document.createComment("app"), child);
   else parentOutlet.replaceChildren(child);

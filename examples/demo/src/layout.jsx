@@ -2,11 +2,12 @@ import "./assets/index.css";
 
 import { cn } from "cnfast";
 import pkg from "../package.json";
-import { signal, useLocation, Head } from "vanilla-bean";
+import { signal, onCleanup, useLocation, Head } from "vanilla-bean";
 
 function Clock() {
   const seconds = signal(0);
-  setInterval(() => seconds++, 1000);
+  const id = setInterval(() => seconds++, 1000);
+  onCleanup(() => clearInterval(id));
 
   return (
     <span class="tabular-nums">

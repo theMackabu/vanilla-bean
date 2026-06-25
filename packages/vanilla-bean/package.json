@@ -22,6 +22,10 @@
     "./vite": {
       "types": "./dist/vite.d.ts",
       "import": "./dist/vite.js"
+    },
+    "./jotai": {
+      "types": "./dist/jotai.d.ts",
+      "import": "./dist/jotai.js"
     }
   },
   "files": [
@@ -44,9 +48,18 @@
     "linkedom": "^0.18.12",
     "vite": "~8.0.16"
   },
+  "peerDependencies": {
+    "jotai": ">=2"
+  },
+  "peerDependenciesMeta": {
+    "jotai": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@types/babel__core": "^7.20.5",
     "@types/node": "^22.10.2",
+    "jotai": "^2.10.0",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3"
   }

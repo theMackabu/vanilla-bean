@@ -8,6 +8,7 @@ export default defineConfig({
     client: "src/client.ts",
     server: "src/server/server.ts",
     "api-routes": "src/server/api-routes.ts",
+    jotai: "src/jotai.ts",
   },
   format: ["esm"],
   target: "node20",

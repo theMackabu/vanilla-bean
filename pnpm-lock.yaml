@@ -13,6 +13,9 @@ importers:
       cnfast:
         specifier: ^0.0.8
         version: 0.0.8
+      jotai:
+        specifier: ^2.20.1
+        version: 2.20.1(@babel/core@8.0.1)(@babel/template@8.0.0)
     devDependencies:
       '@tailwindcss/vite':
         specifier: ^4.3.1
@@ -60,6 +63,9 @@ importers:
       '@types/node':
         specifier: ^22.10.2
         version: 22.20.0
+      jotai:
+        specifier: ^2.10.0
+        version: 2.20.1(@babel/core@8.0.1)(@babel/template@8.0.0)
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.15)(typescript@6.0.3)
@@ -979,6 +985,24 @@ packages:
   jiti@2.7.0:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
     hasBin: true
+
+  jotai@2.20.1:
+    resolution: {integrity: sha512-dnuKfU/GLi8B28RRMjQ3AfoN7kfzP8o41+AX2FmITZqEMY8PHnjABq+VkEooomLwYaGjda+pgy0yFSjaHX/ZPg==}
+    engines: {node: '>=12.20.0'}
+    peerDependencies:
+      '@babel/core': '>=7.0.0'
+      '@babel/template': '>=7.0.0'
+      '@types/react': '>=17.0.0'
+      react: '>=17.0.0'
+    peerDependenciesMeta:
+      '@babel/core':
+        optional: true
+      '@babel/template':
+        optional: true
+      '@types/react':
+        optional: true
+      react:
+        optional: true
 
   joycon@3.1.1:
     resolution: {integrity: sha512-34wB/Y7MW7bzjKRjUKTa46I2Z7eV62Rkhva+KkopW7Qvv/OSWBqvkSY7vusOPrNuZcUG3tApvdVgNB8POj3SPw==}
@@ -2071,6 +2095,11 @@ snapshots:
   import-meta-resolve@4.2.0: {}
 
   jiti@2.7.0: {}
+
+  jotai@2.20.1(@babel/core@8.0.1)(@babel/template@8.0.0):
+    optionalDependencies:
+      '@babel/core': 8.0.1
+      '@babel/template': 8.0.0
 
   joycon@3.1.1: {}
 

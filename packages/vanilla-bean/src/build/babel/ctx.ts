@@ -217,24 +217,78 @@ export default function ctxPlugin({ types: t }: { types: any }): any {
             }
             return false;
           };
+          const HELPERS = new Set(["__use", "__call", "h", "__mark"]);
+          const isWrapArg = (p: any): boolean => {
+            if (p.listKey !== "arguments") return false;
+            const call = p.parentPath;
+            if (!call.isCallExpression()) return false;
+            const callee = call.node.callee;
+            if (t.isIdentifier(callee) && HELPERS.has(callee.name)) return false;
+            if (t.isIdentifier(callee, { name: "h" }) && p.key === 1) return false;
+            return inCtxScope(p);
+          };
+
           let usedUse = false;
           path.traverse({
             Identifier(p: any) {
-              const name = p.node.name;
-              if (p.listKey !== "arguments") return;
-              const call = p.parentPath;
-              if (!call.isCallExpression()) return;
-              const callee = call.node.callee;
-              if (t.isIdentifier(callee, { name: "__use" })) return;
-              if (t.isIdentifier(callee, { name: "h" }) && p.key === 1) return;
-              const binding = p.scope.getBinding(name);
-              const imported = !!binding && binding.kind === "module";
-              if (!injNames.has(name) && !(isCap(name) && imported)) return;
-              if (!inCtxScope(p)) return;
-              p.replaceWith(t.callExpression(t.identifier("__use"), [t.identifier(CTX), t.identifier(name)]));
+              if (p.node.name === CTX || !isCap(p.node.name) || !isWrapArg(p)) return;
+              p.replaceWith(t.callExpression(t.identifier("__use"), [t.identifier(CTX), t.identifier(p.node.name)]));
+              usedUse = true;
+            },
+            MemberExpression(p: any) {
+              if (!t.isIdentifier(p.node.property) || !isCap(p.node.property.name) || !isWrapArg(p)) return;
+              p.replaceWith(t.callExpression(t.identifier("__use"), [t.identifier(CTX), p.node]));
+              p.skip();
               usedUse = true;
             },
           });
+
+          const isNamespaceImport = (p: any, name: string): boolean => {
+            const b = p.scope.getBinding(name);
+            return (
+              !!b &&
+              !!b.path &&
+              typeof b.path.isImportNamespaceSpecifier === "function" &&
+              b.path.isImportNamespaceSpecifier()
+            );
+          };
+          path.traverse({
+            CallExpression(p: any) {
+              const c = p.node.callee;
+              if (t.isIdentifier(c)) {
+                if (ctxLocals.has(c.name) || HELPERS.has(c.name)) return;
+                const binding = p.scope.getBinding(c.name);
+                if (!binding || binding.kind !== "module" || !inCtxScope(p)) return;
+                p.replaceWith(
+                  t.callExpression(t.identifier("__call"), [
+                    t.identifier(CTX),
+                    t.identifier(c.name),
+                    ...p.node.arguments,
+                  ]),
+                );
+                p.skip();
+                usedCall = true;
+                return;
+              }
+              if (!t.isMemberExpression(c) || c.computed || !t.isIdentifier(c.object) || !t.isIdentifier(c.property))
+                return;
+              if (!inCtxScope(p)) return;
+              if (isNamespaceImport(p, c.object.name)) {
+                p.replaceWith(t.callExpression(t.identifier("__call"), [t.identifier(CTX), c, ...p.node.arguments]));
+                p.skip();
+                usedCall = true;
+                return;
+              }
+              const ob = p.scope.getBinding(c.object.name);
+              if (ob && ob.kind === "module" && /^use[A-Z]/.test(c.property.name)) {
+                throw p.buildCodeFrameError(
+                  `[vanilla-bean] ${c.object.name}.${c.property.name}() can't be given a render context (member calls keep their receiver). ` +
+                    `Import the hook directly instead: import { ${c.property.name} } from "…".`,
+                );
+              }
+            },
+          });
+
           const helpers = [usedUse ? "__use" : "", usedCall ? "__call" : ""].filter((n) => n);
           if (helpers.length) {
             path.node.body.unshift(

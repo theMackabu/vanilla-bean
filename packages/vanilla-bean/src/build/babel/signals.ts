@@ -20,6 +20,7 @@ export default function signals({ types: t }: any): any {
       if (parent.isCallExpression() && parent.node.callee === ref.node) continue;
       if (parent.isAssignmentExpression() && parent.node.left === ref.node) continue;
       if (parent.isUpdateExpression()) continue;
+      if (parent.isReturnStatement()) continue;
       ref.replaceWith(get(name));
       ref.skip();
     }

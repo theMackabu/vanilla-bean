@@ -3,6 +3,23 @@ import { c } from "../../log.ts";
 import { buildShell } from "./shell.ts";
 import type { Ctx } from "./index.ts";
 
+async function collectDevCss(server: any): Promise<string> {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const mod of server.moduleGraph.idToModuleMap.values()) {
+    const id: string = mod.id || "";
+    if (!/\.(css|scss|sass|less|styl|pcss)(\?|$)/.test(id) || id.includes("?direct")) continue;
+    const base = id.split("?")[0];
+    if (seen.has(base)) continue;
+    seen.add(base);
+    try {
+      const r = await server.transformRequest(base + "?direct");
+      if (r?.code) out.push(r.code);
+    } catch {}
+  }
+  return out.length ? `<style data-vanilla-dev-css>${out.join("\n")}</style>` : "";
+}
+
 function logRequests(server: any): void {
   server.middlewares.use((req: any, res: any, next: any) => {
     const url = (req.url || "/").split("?")[0];
@@ -83,7 +100,8 @@ export function devPlugin(ctx: Ctx): any {
           if (devTemplate === null)
             devTemplate = await resolveStatics(fw, buildShell(ctx.meta, { entry: ctx.devEntry }));
           const origin = "http://" + (req.headers.host || "localhost");
-          const html = await renderRouteToHTML(fw, devTemplate, url, { keepBody: true, origin });
+          let html = await renderRouteToHTML(fw, devTemplate, url, { keepBody: true, origin });
+          html = html.replace("</head>", (await collectDevCss(server)) + "</head>");
           res.statusCode = 200;
           res.setHeader("Content-Type", "text/html");
           res.end(await server.transformIndexHtml(url, html));

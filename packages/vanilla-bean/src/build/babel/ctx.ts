@@ -128,6 +128,7 @@ export default function ctxPlugin({ types: t }: { types: any }, options: any = {
           const fns = new Map<any, Info>();
           const calledNames = new Set<string>();
           const hTags = new Set<string>();
+          const actionNames = new Set<string>();
 
           const add = (p: any, name: string | undefined, componentish: boolean, exported: boolean): void => {
             let info = fns.get(p.node);
@@ -152,6 +153,10 @@ export default function ctxPlugin({ types: t }: { types: any }, options: any = {
                 const fn = p.get("arguments.0");
                 if (fn.node && (t.isFunctionExpression(fn.node) || t.isArrowFunctionExpression(fn.node)))
                   add(fn, undefined, true, false);
+              }
+              if (t.isIdentifier(c, { name: "__register" })) {
+                const a1 = p.node.arguments[1];
+                if (t.isIdentifier(a1)) actionNames.add(a1.name);
               }
             },
             FunctionDeclaration(p: any) {
@@ -202,7 +207,8 @@ export default function ctxPlugin({ types: t }: { types: any }, options: any = {
           const inject = new Set<Info>();
           for (const info of fns.values()) {
             const componentish = info.componentish || (info.exported && directly.get(info));
-            if (componentish || (moduleScope.get(info) && directly.get(info))) inject.add(info);
+            const isAction = !!info.name && actionNames.has(info.name);
+            if (isAction || componentish || (moduleScope.get(info) && directly.get(info))) inject.add(info);
           }
           let changed = true;
           while (changed) {

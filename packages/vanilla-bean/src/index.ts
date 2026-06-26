@@ -15,6 +15,7 @@ export {
   start,
   routes,
   navigate,
+  revalidate,
   useLocation,
   matchRoute,
   renderRouteToDocument,

@@ -17,7 +17,12 @@ export default function signals({ types: t }: any): any {
 
     for (const ref of binding.referencePaths) {
       const parent = ref.parentPath;
-      if (parent.isCallExpression() && parent.node.callee === ref.node) continue;
+      if (parent.isCallExpression() && parent.node.callee === ref.node) {
+        const args = parent.node.arguments;
+        if (!(t.isIdentifier(args[0]) && args[0].name === CTX)) args.unshift(t.identifier(CTX));
+        ref.skip();
+        continue;
+      }
       if (parent.isAssignmentExpression() && parent.node.left === ref.node) continue;
       if (parent.isUpdateExpression()) continue;
       if (parent.isReturnStatement()) continue;

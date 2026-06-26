@@ -36,7 +36,9 @@ const shell = fs.readFileSync(fs.existsSync(shellFile) ? shellFile : path.join(D
 
 await preloadAll();
 await preloadWs();
+
 const template = injectStatics(shell, await collectStatics());
+const baseTemplate = parseHTML(template);
 
 function injectStatics(html: string, data: Record<string, unknown>): string {
   if (!data || !Object.keys(data).length) return html;
@@ -84,7 +86,9 @@ type HtmlOut =
   | { kind: "stream"; stream: ReadableStream; res: Headers | null };
 
 async function renderHtml(key: string, status: number, origin: string, request: Request): Promise<HtmlOut> {
-  const { document, Node } = parseHTML(template);
+  const document = baseTemplate.document.cloneNode(true) as unknown as Document;
+  const Node = baseTemplate.Node;
+
   const url = new URL(key, origin);
   const ctx = makeCtx(document, Node, { url, request });
   const tracker = trackAsync(ctx);
@@ -135,15 +139,18 @@ async function renderHtml(key: string, status: number, origin: string, request: 
 type NavOut = { status: number; body: Record<string, unknown>; res: Headers | null };
 
 async function renderNav(key: string, origin: string, request: Request): Promise<NavOut> {
-  const { document, Node } = parseHTML(template);
+  const document = baseTemplate.document.cloneNode(true) as unknown as Document;
+  const Node = baseTemplate.Node;
   const url = new URL(key, origin);
   const ctx = makeCtx(document, Node, { url, request });
   const tracker = trackAsync(ctx);
+
   try {
     await renderRouteToDocument(ctx, url.pathname);
   } catch (e) {
     if (!isRedirect(e)) throw e;
   }
+
   if (!ctx.redirect) await settleCapped(tracker);
   const res = ctx.resHeaders;
   if (ctx.redirect) return { status: 200, body: { redirect: ctx.redirect.url }, res };

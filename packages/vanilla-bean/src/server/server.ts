@@ -260,7 +260,17 @@ app.post("/_vanilla/actions/:id", async ({ params, body, set, request }: any) =>
 });
 
 const CACHE_MAX = 5000;
-const HTML_HEADERS: Record<string, string> = { "content-type": "text/html; charset=utf-8" };
+
+const HTML_HEADERS: Record<string, string> = {
+  "content-type": "text/html; charset=utf-8",
+};
+
+const RAW_HTML_HEADERS: Record<string, string> = {
+  "content-type": "text/html; charset=utf-8",
+  vary: "Accept-Encoding",
+};
+
+const COMPRESSIBLE = /\b(?:br|gzip)\b/;
 const pageCache = new Map<string, CacheEntry>();
 
 app.get("*", async ({ request }: any) => {
@@ -281,14 +291,11 @@ app.get("*", async ({ request }: any) => {
 
   const hit = pageCache.get(key);
   if (hit) {
-    pageCache.delete(key);
-    pageCache.set(key, hit);
-    const [encoding, body] = await encodeFor(
-      request.headers.get("accept-encoding") || "",
-      (hit.buf ??= Buffer.from(hit.html)),
-      hit,
-      { html: true },
-    );
+    const buf = (hit.buf ??= Buffer.from(hit.html));
+    const ae = request.headers.get("accept-encoding") || "";
+    if (!COMPRESSIBLE.test(ae))
+      return new Response(buf as unknown as BodyInit, { status: hit.status, headers: RAW_HTML_HEADERS });
+    const [encoding, body] = await encodeFor(ae, buf, hit, { html: true });
     const headers: Record<string, string> = { ...HTML_HEADERS, vary: "Accept-Encoding" };
     if (encoding) headers["content-encoding"] = encoding;
     return new Response(body as unknown as BodyInit, { status: hit.status, headers });

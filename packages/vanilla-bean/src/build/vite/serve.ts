@@ -83,7 +83,7 @@ export function devPlugin(ctx: Ctx): any {
           if (devTemplate === null)
             devTemplate = await resolveStatics(fw, buildShell(ctx.meta, { entry: ctx.devEntry }));
           const origin = "http://" + (req.headers.host || "localhost");
-          const html = await renderRouteToHTML(fw, devTemplate, url, { keepBody: false, origin });
+          const html = await renderRouteToHTML(fw, devTemplate, url, { keepBody: true, origin });
           res.statusCode = 200;
           res.setHeader("Content-Type", "text/html");
           res.end(await server.transformIndexHtml(url, html));

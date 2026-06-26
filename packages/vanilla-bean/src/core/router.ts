@@ -434,7 +434,9 @@ function buildLayered(ctx: Ctx, chain: Chain, path: string, reset: () => void): 
 function hydrateBoot(ctx: Ctx, chain: Chain, path: string): void {
   ctx.booted = true;
   const reset = () => go(ctx, location.pathname + location.search + location.hash, false);
-  withCursor(ctx, ctx.rootEl!.firstChild, () => buildLayered(ctx, chain, path, reset));
+  const wasEmpty = !ctx.rootEl!.firstChild;
+  const tree = withCursor(ctx, ctx.rootEl!.firstChild, () => buildLayered(ctx, chain, path, reset));
+  if (wasEmpty) ctx.rootEl!.replaceChildren(tree as Node);
 }
 
 function swap(ctx: Ctx, chain: Chain, path: string): void {

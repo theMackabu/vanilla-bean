@@ -363,6 +363,16 @@ function fillServerIslands(ctx: Ctx, islands: Map<string, string>): void {
   }
 }
 
+export async function revalidate(): Promise<void> {
+  const ctx = clientCtx;
+  if (!ctx || typeof location === "undefined") return;
+  try {
+    const nav = await fetchNav(new URL(location.href));
+    if (nav.redirect) navigate(nav.redirect, { replace: true });
+    else if (nav.islands) fillServerIslands(ctx, nav.islands);
+  } catch {}
+}
+
 const NAV_MIME = "application/vnd.vanilla-bean.nav+json";
 async function fetchNav(url: URL): Promise<{ islands?: Map<string, string>; redirect?: string }> {
   const res = await fetch(url.pathname + url.search, { headers: { accept: NAV_MIME } });

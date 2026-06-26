@@ -12,7 +12,7 @@ function Messages() {
     <ul class="mt-3 space-y-1">
       {list.map((m) => (
         <li>
-          <span class="text-zinc-400">{m.at}</span> — {m.text}
+          <span class="text-zinc-400">{m.at}</span>: {m.text}
         </li>
       ))}
     </ul>

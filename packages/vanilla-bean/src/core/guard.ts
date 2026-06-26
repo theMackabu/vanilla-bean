@@ -16,7 +16,7 @@ export function installTimerGuard(mode: "error" | "warn"): void {
       if (rendering) {
         const msg =
           `[vanilla-bean] ${name}() ran during a server render. Timers leak on the server ` +
-          `(they tick against a discarded document) — move this into a "use client" component.`;
+          `(they tick against a discarded document), move this into a "use client" component.`;
         if (mode === "error") throw new Error(msg);
         console.warn(msg);
         return 0;

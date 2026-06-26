@@ -220,11 +220,11 @@ import { bump } from "../actions/demo";
 const res = await bump(2); // RPC to the server
 ```
 
-(Action and page files can be `.js`/`.ts` as well — JSX is optional. A `.js` page can build DOM with `h()`, return a string, or just `redirect()`.)
+(Action and page files can be `.js`/`.ts` as well, JSX is optional. A `.js` page can build DOM with `h()`, return a string, or just `redirect()`.)
 
 ## Request, cookies & redirect
 
-Server components and server actions can read the incoming request — **cookies, headers, method** — and set response cookies/headers or redirect. Read it synchronously at the top (the server serializes renders, so the context is per-request).
+Server components and server actions can read the incoming request **cookies, headers, method** and set response cookies/headers or redirect. Read it synchronously at the top (the server serializes renders, so the context is per-request).
 
 ```jsx
 import { cookies, redirect } from "vanilla-bean";
@@ -253,10 +253,10 @@ export async function logout() {
 }
 ```
 
-- `cookies()` — `.get(name)` reads a request cookie; `.set(name, value, opts)` / `.delete(name)` queue `Set-Cookie` on the response.
-- `getRequest()` / `headers()` — the raw `Request` / its headers.
-- `setHeader(name, value)` — set a response header.
-- `redirect(url)` — a **server component** yields a real `302` (sync) or a client redirect (mid-stream); an **action** makes the client navigate; a client navigation to a server route is resolved through the nav payload. Auth-gated routes are skipped during the static prerender.
+- `cookies()` / `.get(name)` reads a request cookie; `.set(name, value, opts)` / `.delete(name)` queue `Set-Cookie` on the response.
+- `getRequest()` / `headers()` the raw `Request` / its headers.
+- `setHeader(name, value)` set a response header.
+- `redirect(url)` a **server component** yields a real `302` (sync) or a client redirect (mid-stream); an **action** makes the client navigate; a client navigation to a server route is resolved through the nav payload. Auth-gated routes are skipped during the static prerender.
 
 ## API routes & WebSockets
 

@@ -51,10 +51,11 @@ export async function __formAction(_ctx: Ctx, url: string, e: any): Promise<void
     headers: { accept: "application/json" },
     body: new URLSearchParams(new FormData(form) as any),
   });
+
   const data = res.status === 204 ? null : await res.json().catch(() => null);
-  if (data && typeof data === "object" && typeof data.__redirect === "string") {
-    const { navigate } = await import("./router.ts");
-    navigate(data.__redirect);
-  }
+  const router = await import("./router.ts");
+
+  if (data && typeof data === "object" && typeof data.__redirect === "string") router.navigate(data.__redirect);
+  else await router.revalidate();
   if (res.ok) form.reset?.();
 }

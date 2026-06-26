@@ -406,7 +406,7 @@ export default function ctxPlugin({ types: t }: { types: any }, options: any = {
                 throw p.buildCodeFrameError(
                   "[vanilla-bean] a render-context API (a signal read, effect, cookies, …) is used at module scope, " +
                     "where there is no render context. Move it inside a component. " +
-                    "(Creating a signal at module scope is fine — `const x = signal(0)` — but reading it must be inside a component.)",
+                    "(Creating a signal at module scope is fine, `const x = signal(0)` but reading it must be inside a component.)",
                 );
               }
             },

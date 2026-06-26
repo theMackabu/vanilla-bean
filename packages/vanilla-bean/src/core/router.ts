@@ -313,6 +313,15 @@ async function go(ctx: Ctx, href: string, push: boolean): Promise<void> {
   const chain = await loadChain(url.pathname);
   const navPromise = ctx.booted && chain.serverRoute ? fetchNav(url) : null;
 
+  if (ctx.booted && url.pathname + url.search === location.pathname + location.search) {
+    if (navPromise) {
+      const nav = await navPromise;
+      if (nav.redirect) return navigate(nav.redirect, { replace: true });
+      if (nav.islands) fillServerIslands(ctx, nav.islands);
+    }
+    return;
+  }
+
   const apply = () => {
     if (push) history.pushState({}, "", url.pathname + url.search + url.hash);
     ctx.url = url;

@@ -1,4 +1,5 @@
 import { effect, disposeChildren, trackServer } from "./reactive.ts";
+import { __formAction } from "./actions.ts";
 import type { Ctx } from "./ctx.ts";
 
 export type Props = Record<string, any> & { children?: unknown };
@@ -161,7 +162,13 @@ export function h(ctx: Ctx, tag: string | Component, props: Props | null, ...chi
   if (props) {
     for (const key in props) {
       const value = props[key];
-      if (isEventProp(key)) el.addEventListener(key.slice(2).toLowerCase(), value);
+      const action = key === "action" && typeof value === "function" ? (value.__actionId ? value : value()) : null;
+      if (action && action.__actionId) {
+        const url = "/_vanilla/actions/" + encodeURIComponent(action.__actionId);
+        el.setAttribute("action", url);
+        if (!props.method) el.setAttribute("method", "post");
+        if (!import.meta.env?.SSR) el.addEventListener("submit", (e: any) => __formAction(ctx, url, e));
+      } else if (isEventProp(key)) el.addEventListener(key.slice(2).toLowerCase(), value);
       else if (typeof value === "function") effect(ctx, () => setProp(el, key, value()));
       else if (!found) setProp(el, key, value);
     }

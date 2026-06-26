@@ -16,6 +16,7 @@ const links = [
   { href: "/demo/auth", label: "auth" },
   { href: "/demo/patterns", label: "patterns" },
   { href: "/demo/transition", label: "transition" },
+  { href: "/demo/form", label: "form" },
   { href: "/demo/boom", label: "boom" },
 ];
 

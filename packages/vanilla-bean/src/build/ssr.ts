@@ -71,12 +71,21 @@ export async function prerender({
     const pathPad = Math.max(...routes.map((r) => relOf(r).length));
     for (const route of routes) {
       const t = Date.now();
+      const mod = await fw.routes[route]?.().catch(() => null);
+      if (mod && mod.cache === false) {
+        console.log(
+          `  ${c.yellow("○")} ${c.dim("ssg")} ${c.bold(route.padEnd(routePad))}  ${c.gray("→ dynamic, skipped")}`,
+        );
+        continue;
+      }
       let html: string;
       try {
         html = await renderRouteToHTML(fw, tmpl, route);
       } catch (e) {
         if (fw.isRedirect?.(e)) {
-          console.log(`  ${c.yellow("○")} ${c.dim("ssg")} ${c.bold(route.padEnd(routePad))}  ${c.gray("→ skipped")}`);
+          console.log(
+            `  ${c.yellow("○")} ${c.dim("ssg")} ${c.bold(route.padEnd(routePad))}  ${c.gray("→ redirect, skipped")}`,
+          );
           continue;
         }
         throw e;

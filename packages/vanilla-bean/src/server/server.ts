@@ -255,20 +255,38 @@ const JSON_HEADERS = { "content-type": "application/json" };
 
 app.post("/_vanilla/actions/:id", async ({ params, body, set, request }: any) => {
   const id = params.id;
-  const { args } = typeof body === "string" ? JSON.parse(body) : body || {};
   if (!hasAction(id)) {
     set.status = 404;
     return { error: "unknown action" };
   }
+  const ct = request.headers.get("content-type") || "";
+  const isJson = ct.includes("application/json");
+  const wantsJson = isJson || (request.headers.get("accept") || "").includes("application/json");
+
+  let args: unknown[] | undefined;
+  if (isJson) {
+    args = (typeof body === "string" ? JSON.parse(body) : body || {}).args;
+  } else {
+    const fd = new FormData();
+    if (body && typeof body === "object") for (const [k, v] of Object.entries(body)) fd.append(k, v as any);
+    args = [fd];
+  }
+
   const ctx = makeCtx(null, null, { url: new URL(request.url), request });
+  const back = request.headers.get("referer") || "/";
+
   try {
     const result = await runAction(ctx, id, args);
-    return new Response(JSON.stringify(result ?? null), { headers: withResHeaders(JSON_HEADERS, ctx.resHeaders) });
+    if (wantsJson)
+      return new Response(JSON.stringify(result ?? null), { headers: withResHeaders(JSON_HEADERS, ctx.resHeaders) });
+    return new Response(null, { status: 303, headers: withResHeaders({ location: back }, ctx.resHeaders) });
   } catch (e: any) {
     if (isRedirect(e)) {
-      return new Response(JSON.stringify({ __redirect: e.redirect.url }), {
-        headers: withResHeaders(JSON_HEADERS, ctx.resHeaders),
-      });
+      if (wantsJson)
+        return new Response(JSON.stringify({ __redirect: e.redirect.url }), {
+          headers: withResHeaders(JSON_HEADERS, ctx.resHeaders),
+        });
+      return new Response(null, { status: 303, headers: withResHeaders({ location: e.redirect.url }, ctx.resHeaders) });
     }
     return new Response(JSON.stringify({ error: String(e?.message ?? e) }), { status: 500, headers: JSON_HEADERS });
   }

@@ -10,6 +10,17 @@ const templateDir = path.join(here, "template");
 
 const tsOnly = new Set(["tsconfig.json", "src/app.d.ts"]);
 const tailwindOnly = new Set(["src/assets/index.css"]);
+const invalidProjectPath = "letters, numbers, dot, dash, underscore and slash only";
+
+function validateProjectPath(v) {
+  return v && /[^a-zA-Z0-9._/-]/.test(v) ? invalidProjectPath : undefined;
+}
+
+function formatPathForMessage(dest) {
+  const rel = path.relative(process.cwd(), dest);
+  if (!rel) return ".";
+  return rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel : dest;
+}
 
 export function scaffold({ dest, name, ts, tailwind }) {
   const tokens = {
@@ -66,14 +77,24 @@ export function scaffold({ dest, name, ts, tailwind }) {
 
 async function main() {
   p.intro("🫘 create vanilla bean");
+  const projectPathArg = process.argv[2];
 
-  const name = await p.text({
-    message: "Project name?",
-    placeholder: "my-vanilla-bean-app",
-    defaultValue: "my-vanilla-bean-app",
-    validate: (v) => (v && /[^a-zA-Z0-9._-]/.test(v) ? "letters, numbers, dot, dash and underscore only" : undefined),
-  });
-  if (p.isCancel(name)) return p.cancel("cancelled");
+  const projectPath =
+    projectPathArg ??
+    (await p.text({
+      message: "Project path? (type . for current directory)",
+      placeholder: "my-vanilla-bean-app",
+      defaultValue: "my-vanilla-bean-app",
+      validate: validateProjectPath,
+    }));
+
+  if (p.isCancel(projectPath)) return p.cancel("cancelled");
+  const projectPathError = validateProjectPath(projectPath);
+  if (projectPathError) return p.cancel(projectPathError);
+
+  const dest = path.resolve(process.cwd(), projectPath);
+  const name = path.basename(dest);
+  if (!name) return p.cancel("project path must include a directory name");
 
   const lang = await p.select({
     message: "Language?",
@@ -82,19 +103,19 @@ async function main() {
       { value: "js", label: "JavaScript" },
     ],
   });
-  if (p.isCancel(lang)) return p.cancel("cancelled");
 
+  if (p.isCancel(lang)) return p.cancel("cancelled");
   const tailwind = await p.confirm({ message: "Add Tailwind CSS?", initialValue: true });
   if (p.isCancel(tailwind)) return p.cancel("cancelled");
 
-  const dest = path.resolve(process.cwd(), name);
   if (fs.existsSync(dest) && fs.readdirSync(dest).length) {
-    return p.cancel(`${name} already exists and is not empty`);
+    return p.cancel(`${formatPathForMessage(dest)} already exists and is not empty`);
   }
 
   scaffold({ dest, name, ts: lang === "ts", tailwind });
+  const cd = formatPathForMessage(dest);
 
-  p.note(`cd ${name}\nant install\nant dev`, "next steps");
+  p.note(`${cd === "." ? "" : `cd ${cd}\n`}ant install\nant dev`, "next steps");
   p.outro("happy hacking 🫘");
 }
 

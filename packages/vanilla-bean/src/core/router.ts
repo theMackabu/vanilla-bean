@@ -334,8 +334,10 @@ async function go(ctx: Ctx, href: string, mode: "push" | "replace" | "none"): Pr
       const nav = await navPromise;
       if (seq !== navSeq || nav === "fail") return;
       if (nav.redirect) return navigate(nav.redirect, { replace: true });
-      if (nav.islands) fillServerIslands(ctx, nav.islands);
-      patchHead(nav.head);
+      const c = await nav.content;
+      if (seq !== navSeq || !c) return;
+      if (c.islands) fillServerIslands(ctx, c.islands);
+      patchHead(c.head);
     }
     return;
   }
@@ -363,13 +365,20 @@ async function go(ctx: Ctx, href: string, mode: "push" | "replace" | "none"): Pr
       if (isRedirect(e)) return navigate((e as any).redirect.url, { replace: true });
       throw e;
     }
-    if (nav && nav.islands) fillServerIslands(ctx, nav.islands);
     flushHead(ctx);
-    if (nav) patchHead(nav.head);
   };
 
   if (ctx.transitions && (document as any).startViewTransition) (document as any).startViewTransition(apply);
   else apply();
+
+  if (nav && nav.content)
+    nav.content
+      .then((c) => {
+        if (seq !== navSeq || !c) return;
+        if (c.islands) fillServerIslands(ctx, c.islands);
+        patchHead(c.head);
+      })
+      .catch(() => {});
 }
 
 function fillServerIslands(ctx: Ctx, islands: Map<string, string>): void {
@@ -384,24 +393,52 @@ export async function revalidate(): Promise<void> {
   if (!ctx || typeof location === "undefined") return;
   try {
     const nav = await fetchNav(new URL(location.href));
-    if (nav.redirect) navigate(nav.redirect, { replace: true });
-    else if (nav.islands) {
-      fillServerIslands(ctx, nav.islands);
-      patchHead(nav.head);
+    if (nav.redirect) return navigate(nav.redirect, { replace: true });
+    const c = await nav.content;
+    if (c) {
+      if (c.islands) fillServerIslands(ctx, c.islands);
+      patchHead(c.head);
     }
   } catch {}
 }
 
 type HeadPatch = { title?: string; meta?: string[] };
-type Nav = { islands?: Map<string, string>; redirect?: string; head?: HeadPatch };
+type NavContent = { islands?: Map<string, string>; head?: HeadPatch };
+type Nav = { redirect?: string; content?: Promise<NavContent> };
 
 const NAV_MIME = "application/vnd.vanilla-bean.nav+json";
 async function fetchNav(url: URL): Promise<Nav> {
   const res = await fetch(url.pathname + url.search, { headers: { accept: NAV_MIME } });
-  if (!res.ok) throw new Error("nav " + res.status);
-  const payload = (await res.json()) as { islands?: Record<string, string>; redirect?: string; head?: HeadPatch };
-  if (payload.redirect) return { redirect: payload.redirect };
-  return { islands: new Map(Object.entries(payload.islands || {})), head: payload.head };
+  if (!res.ok || !res.body) throw new Error("nav " + res.status);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+
+  const readLine = async (): Promise<any> => {
+    for (;;) {
+      const nl = buf.indexOf("\n");
+      if (nl >= 0) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        if (line) return JSON.parse(line);
+      }
+      const { value, done } = await reader.read();
+      if (done) return buf.trim() ? JSON.parse(buf) : null;
+      buf += decoder.decode(value, { stream: true });
+    }
+  };
+
+  const first = await readLine();
+  if (first?.redirect) return { redirect: first.redirect };
+
+  const content = readLine().then(
+    (c: any): NavContent => ({
+      islands: new Map(Object.entries(c?.islands || {})),
+      head: c?.head,
+    }),
+  );
+
+  return { content };
 }
 
 function patchHead(head?: HeadPatch): void {

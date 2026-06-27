@@ -31,6 +31,7 @@ export type Ctx = {
   resHeaders: Headers;
   redirect: Redirect | null;
   dynamic: boolean;
+  committed: boolean;
   matchedParams: Record<string, unknown>;
   mounted: any[];
   pageOwner: Owner | null;
@@ -65,6 +66,7 @@ export function makeCtx(
     resHeaders: new Headers(),
     redirect: null,
     dynamic: false,
+    committed: false,
     matchedParams: {},
     mounted: [],
     pageOwner: null,

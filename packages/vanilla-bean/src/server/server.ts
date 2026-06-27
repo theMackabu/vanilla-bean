@@ -107,6 +107,7 @@ async function renderHtml(key: string, status: number, origin: string, request: 
     if (!isRedirect(e)) throw e;
   }
   const res = ctx.resHeaders;
+  ctx.committed = true;
 
   if (ctx.redirect) return { kind: "redirect", redirect: ctx.redirect, res };
   const cacheable = !!rendered?.cache && !ctx.dynamic;
@@ -143,39 +144,34 @@ async function renderHtml(key: string, status: number, origin: string, request: 
   return { kind: "stream", stream, res };
 }
 
-type NavOut = { status: number; body: Record<string, unknown>; res: Headers | null };
+type NavStart = { ctx: any; document: any; tracker: Set<Promise<unknown>>; status: number };
 
-async function renderNav(key: string, origin: string, request: Request): Promise<NavOut> {
-  const document = cloneDoc() as Document;
-  const Node = docNode;
-
+async function renderNavStart(key: string, origin: string, request: Request): Promise<NavStart> {
+  const document = cloneDoc() as any;
   const url = new URL(key, origin);
-  const ctx = makeCtx(document, Node, { url, request });
+  const ctx = makeCtx(document, docNode, { url, request });
   const tracker = trackAsync(ctx);
-
   try {
     await renderRouteToDocument(ctx, url.pathname);
   } catch (e) {
     if (!isRedirect(e)) throw e;
   }
+  return { ctx, document, tracker, status: matchRoute(url.pathname) ? 200 : 404 };
+}
 
-  if (!ctx.redirect) await settleCapped(tracker);
-  const res = ctx.resHeaders;
-  if (ctx.redirect) return { status: 200, body: { redirect: ctx.redirect.url }, res };
-
-  const doc = document as any;
+function extractNav(document: any): { islands: Record<string, string>; head: { title: string; meta: string[] } } {
   const islands: Record<string, string> = {};
-  for (const el of doc.querySelectorAll('island[data-mode="server"][data-key]')) {
+  for (const el of document.querySelectorAll('island[data-mode="server"][data-key]')) {
     islands[el.getAttribute("data-key")!] = el.innerHTML;
   }
-
-  const titleEl = doc.querySelector("title");
-  const head = {
-    title: titleEl ? titleEl.textContent : "",
-    meta: [...doc.head.querySelectorAll("[data-head]")].map((el: any) => el.outerHTML),
+  const titleEl = document.querySelector("title");
+  return {
+    islands,
+    head: {
+      title: titleEl ? titleEl.textContent : "",
+      meta: [...document.head.querySelectorAll("[data-head]")].map((el: any) => el.outerHTML),
+    },
   };
-
-  return { status: matchRoute(url.pathname) ? 200 : 404, body: { islands, head }, res };
 }
 
 const TYPES: Record<string, string> = {
@@ -324,11 +320,23 @@ app.get("*", async ({ request }: any) => {
   if (path.extname(pathname)) return new Response("Not found", { status: 404 });
 
   if ((request.headers.get("accept") || "").includes(NAV_MIME)) {
-    const { status, body, res } = await renderNav(key, u.slice(0, ps), request);
-    return new Response(JSON.stringify({ status, ...body }), {
-      status,
-      headers: withResHeaders({ "content-type": NAV_MIME }, res),
+    const { ctx, document, tracker, status } = await renderNavStart(key, u.slice(0, ps), request);
+    const headers = withResHeaders({ "content-type": NAV_MIME }, ctx.resHeaders);
+    ctx.committed = true;
+
+    if (ctx.redirect) return new Response(JSON.stringify({ redirect: ctx.redirect.url }) + "\n", { headers });
+    if (status !== 200) return new Response("{}\n", { status, headers });
+
+    const enc = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(c) {
+        c.enqueue(enc.encode(JSON.stringify({ proceed: 1 }) + "\n"));
+        await settleCapped(tracker);
+        c.enqueue(enc.encode(JSON.stringify(extractNav(document)) + "\n"));
+        c.close();
+      },
     });
+    return new Response(stream, { headers });
   }
 
   const hit = pageCache.get(key);

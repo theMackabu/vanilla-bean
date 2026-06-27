@@ -9,6 +9,15 @@ export function headers(ctx: Ctx): Headers {
   return getRequest(ctx).headers;
 }
 
+function assertOpen(ctx: Ctx, what: string): void {
+  if (!ctx.committed) return;
+  const msg =
+    `[vanilla-bean] cannot set ${what} after the response has started streaming. ` +
+    `set headers/cookies synchronously before any await in a server component, or do it in a server action (POST).`;
+  console.error(msg);
+  throw new Error(msg);
+}
+
 function parseCookies(header: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const part of header.split(";")) {
@@ -48,15 +57,18 @@ export function cookies(ctx: Ctx) {
   return {
     get: (name: string): string | undefined => jar[name],
     set: (name: string, value: string, options: CookieOptions = {}): void => {
+      assertOpen(ctx, "a cookie");
       ctx.resHeaders.append("set-cookie", serializeCookie(name, value, options));
     },
     delete: (name: string, options: CookieOptions = {}): void => {
+      assertOpen(ctx, "a cookie");
       ctx.resHeaders.append("set-cookie", serializeCookie(name, "", { ...options, maxAge: 0 }));
     },
   };
 }
 
 export function setHeader(ctx: Ctx, name: string, value: string): void {
+  assertOpen(ctx, "a response header");
   ctx.dynamic = true;
   ctx.resHeaders.set(name, value);
 }

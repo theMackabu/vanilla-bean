@@ -1,7 +1,7 @@
-{{tw_import}}export default {
+{{alias_import}}{{tw_import}}export default {
   meta: {
     lang: "en",
     title: "{{name}}",
     description: "made with create-vanilla-bean",
-  },{{tw_plugin}}
+  },{{vite_config}}
 };

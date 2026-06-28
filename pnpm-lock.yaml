@@ -29,6 +29,9 @@ importers:
 
   packages/create-vanilla-bean:
     dependencies:
+      '@clack/core':
+        specifier: ^1.4.2
+        version: 1.4.2
       '@clack/prompts':
         specifier: ^1.6.0
         version: 1.6.0

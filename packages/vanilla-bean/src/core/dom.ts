@@ -2,7 +2,9 @@ import { effect, disposeChildren, trackServer } from "./reactive.ts";
 import { __formAction } from "./actions.ts";
 import type { Ctx } from "./ctx.ts";
 
-export type Props = Record<string, any> & { children?: unknown };
+export type Child = Node | string | number | boolean | null | undefined | Child[] | (() => Child);
+export type Children = Child;
+export type Props = Record<string, any> & { children?: Children };
 
 export type Component = {
   (ctx: Ctx, props: Props): unknown;
@@ -91,10 +93,10 @@ export function buildFresh<T>(ctx: Ctx, fn: () => T): T {
   }
 }
 
-export function h(ctx: Ctx, tag: string | Component, props: Props | null, ...children: unknown[]): any {
+export function h(ctx: Ctx, tag: string | Component, props: Props | null, ...children: Child[]): any {
   if (typeof tag === "function") {
     const mode = tag.__mode;
-    const child = children.length <= 1 ? children[0] : children;
+    const child: Children = children.length <= 1 ? children[0] : children;
 
     const p: Props = props
       ? ((props.children = child), props)

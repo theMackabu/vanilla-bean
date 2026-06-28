@@ -4,7 +4,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { spawn, execSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { build, createServer, preview } from "vite";
+import { build, createServer, loadConfigFromFile, preview } from "vite";
 import framework from "./vite/index.ts";
 import { prerender } from "./ssr.ts";
 import { c, brand, assetTable, VERSION } from "../log.ts";
@@ -36,9 +36,16 @@ async function loadConfig(): Promise<any> {
   for (const ext of ["ts", "js", "mjs"]) {
     const file = path.join(root, `vanilla-bean.config.${ext}`);
     if (!fs.existsSync(file)) continue;
-    try {
-      return (await import(pathToFileURL(file).href)).default || {};
-    } catch {}
+    const loaded = await loadConfigFromFile(
+      {
+        command: cmd === "dev" ? "serve" : "build",
+        mode: process.env.NODE_ENV || (cmd === "dev" ? "development" : "production"),
+      },
+      file,
+      root,
+      "silent",
+    );
+    return loaded?.config || {};
   }
   return {};
 }

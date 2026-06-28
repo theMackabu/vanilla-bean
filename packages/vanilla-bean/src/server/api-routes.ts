@@ -1,38 +1,23 @@
+import { apiRouteMeta, partsToPath, uniqueRoutes, type Part } from "./route-paths.ts";
+
 type Loader = () => Promise<any>;
-type Part = string | { param: string } | { catch: string };
-type Route = { load: Loader; parts: Part[]; module?: any };
+type Route = { load: Loader; file: string; path: string; parts: Part[]; module?: any };
 
 const apiModules = import.meta.glob("/src/api/**/*.{js,jsx,ts,tsx}");
 const wsModules = import.meta.glob("/src/api/**/*.ws.{js,jsx,ts,tsx}");
 
-function patternOf(file: string, strip: RegExp): Part[] {
-  const rel = file
-    .replace(/^\/src/, "")
-    .replace(strip, "")
-    .replace(/\/index$/, "");
+const apiTable: Route[] = uniqueRoutes(
+  Object.entries(apiModules)
+    .filter(([file]) => !/\.ws\.[jt]sx?$/.test(file))
+    .map(([file, load]) => ({ load, ...apiRouteMeta(file, /\.[jt]sx?$/) })),
+);
 
-  return rel
-    .split("/")
-    .filter(Boolean)
-    .map((seg): Part => {
-      let m: RegExpMatchArray | null;
-      if ((m = seg.match(/^\[\.\.\.(.+)\]$/))) return { catch: m[1]! };
-      if ((m = seg.match(/^\[(.+)\]$/))) return { param: m[1]! };
-      return seg;
-    });
-}
+const wsTable: Route[] = uniqueRoutes(
+  Object.entries(wsModules).map(([file, load]) => ({ load, module: null, ...apiRouteMeta(file, /\.ws\.[jt]sx?$/) })),
+);
 
-const byStatic = (a: Route, b: Route): number =>
-  b.parts.filter((p) => typeof p === "string").length - a.parts.filter((p) => typeof p === "string").length;
-
-const apiTable: Route[] = Object.entries(apiModules)
-  .filter(([file]) => !/\.ws\.[jt]sx?$/.test(file))
-  .map(([file, load]) => ({ load, parts: patternOf(file, /\.[jt]sx?$/) }))
-  .sort(byStatic);
-
-const wsTable: Route[] = Object.entries(wsModules)
-  .map(([file, load]) => ({ load, module: null, parts: patternOf(file, /\.ws\.[jt]sx?$/) }))
-  .sort(byStatic);
+export const apiRoutes = apiTable.map(({ path, file }) => ({ path, file }));
+export const wsRoutes = wsTable.map(({ path, file }) => ({ path, file }));
 
 export async function preloadWs(): Promise<void> {
   for (const r of wsTable) r.module = await r.load();
@@ -93,9 +78,6 @@ export async function handleApi(request: Request): Promise<Response | null> {
   return toResponse(await handler(request, ctx));
 }
 
-const elysiaPath = (parts: Part[]): string =>
-  "/" + parts.map((p) => (typeof p === "string" ? p : "param" in p ? ":" + p.param : "*")).join("/");
-
 function paramsFrom(parts: Part[], e: Record<string, string>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const p of parts) {
@@ -113,7 +95,7 @@ function paramsFrom(parts: Part[], e: Record<string, string>): Record<string, un
 const METHODS = ["get", "post", "put", "patch", "delete"] as const;
 export function registerApiRoutes(app: any): void {
   for (const route of apiTable) {
-    const path = elysiaPath(route.parts);
+    const path = partsToPath(route.parts);
     const handler = async (c: any) => {
       const mod = await route.load();
       const fn = mod[c.request.method] || (c.request.method === "GET" ? mod.default : null);

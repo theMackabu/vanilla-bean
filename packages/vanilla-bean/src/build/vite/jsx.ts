@@ -2,6 +2,7 @@ import { transformAsync } from "@babel/core";
 import jsxTransformPkg from "@babel/plugin-transform-react-jsx";
 import tsTransformPkg from "@babel/plugin-transform-typescript";
 import signals from "../babel/signals.ts";
+import jsxMap from "../babel/jsx-map.ts";
 import thunkPlugin from "../babel/jsx-thunk.ts";
 import className from "../babel/class-name.ts";
 import directives from "../babel/directives.ts";
@@ -33,6 +34,7 @@ export function jsxPlugin(ctx: Ctx): any {
 
       const plugins: any[] = [
         signals,
+        jsxMap,
         thunkPlugin,
         className,
         [directives, { server: !browser, browser }],

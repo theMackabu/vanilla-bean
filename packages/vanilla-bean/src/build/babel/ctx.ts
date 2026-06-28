@@ -1,4 +1,4 @@
-import { recordExports, resolveModule, lookupExport, ensureScanned } from "./manifest.ts";
+import { recordExports, resolveModule, lookupExport, lookupAction, ensureScanned } from "./manifest.ts";
 
 const CTX = "__vanilla_ctx";
 
@@ -25,6 +25,12 @@ const CTX_APIS = new Set([
 ]);
 
 const FRAMEWORK_SOURCES = new Set(["vanilla-bean", "vanilla-bean/jotai"]);
+
+function hashKey(str: string): string {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+  return "s" + (h >>> 0).toString(36);
+}
 
 export default function ctxPlugin({ types: t }: { types: any }, options: any = {}): any {
   const scan = !!options.scan;
@@ -99,6 +105,18 @@ export default function ctxPlugin({ types: t }: { types: any }, options: any = {
             ensureScanned(target, mode);
             return lookupExport(mode, target, importedName);
           };
+          const resolveImportedAction = (binding: any): boolean => {
+            const ip = binding.path;
+            if (!ip || !ip.parentPath?.node?.source) return false;
+            if (typeof ip.isImportSpecifier !== "function" || !ip.isImportSpecifier()) return false;
+            const importedName = t.isIdentifier(ip.node.imported) ? ip.node.imported.name : ip.node.imported.value;
+            const source: string = ip.parentPath.node.source.value;
+            if (!source.startsWith(".") || !filename) return false;
+            const target = resolveModule(filename, source);
+            if (!target) return false;
+            ensureScanned(target, mode);
+            return lookupAction(mode, target, importedName);
+          };
 
           let usedCall = false;
           path.traverse({
@@ -124,7 +142,7 @@ export default function ctxPlugin({ types: t }: { types: any }, options: any = {
             },
           });
 
-          type Info = { path: any; node: any; name?: string; componentish: boolean; exported: boolean };
+          type Info = { path: any; node: any; name?: string; componentish: boolean; exported: boolean; server: boolean };
           const fns = new Map<any, Info>();
           const calledNames = new Set<string>();
           const hTags = new Set<string>();
@@ -133,7 +151,7 @@ export default function ctxPlugin({ types: t }: { types: any }, options: any = {
           const add = (p: any, name: string | undefined, componentish: boolean, exported: boolean): void => {
             let info = fns.get(p.node);
             if (!info) {
-              info = { path: p, node: p.node, name, componentish, exported };
+              info = { path: p, node: p.node, name, componentish, exported, server: false };
               fns.set(p.node, info);
             }
             if (name && !info.name) info.name = name;
@@ -157,6 +175,10 @@ export default function ctxPlugin({ types: t }: { types: any }, options: any = {
               if (t.isIdentifier(c, { name: "__register" })) {
                 const a1 = p.node.arguments[1];
                 if (t.isIdentifier(a1)) actionNames.add(a1.name);
+              }
+              if (t.isIdentifier(c, { name: "__action" }) && p.parentPath?.isVariableDeclarator?.()) {
+                const id = p.parentPath.node.id;
+                if (t.isIdentifier(id)) actionNames.add(id.name);
               }
             },
             FunctionDeclaration(p: any) {
@@ -186,6 +208,20 @@ export default function ctxPlugin({ types: t }: { types: any }, options: any = {
 
           for (const info of fns.values()) {
             if (info.name && hTags.has(info.name)) info.componentish = true;
+            info.path.traverse({
+              CallExpression(p: any) {
+                if (p.getFunctionParent()?.node !== info.node) return;
+                const c = p.node.callee;
+                if (!t.isIdentifier(c)) return;
+                const binding = p.scope.getBinding(c.name);
+                if (!binding || binding.kind !== "module") return;
+                if (resolveImportedAction(binding)) {
+                  info.server = true;
+                  info.componentish = true;
+                  p.stop();
+                }
+              },
+            });
           }
           const moduleScope = new Map<Info, boolean>();
           const directly = new Map<Info, boolean>();
@@ -280,22 +316,48 @@ export default function ctxPlugin({ types: t }: { types: any }, options: any = {
                 }
               }
             }
-            recordExports(mode, filename, { ctx: ctxExports, known: knownExports, defaultCtx, defaultKnown });
+            recordExports(mode, filename, {
+              ctx: ctxExports,
+              known: knownExports,
+              actions: actionNames,
+              defaultCtx,
+              defaultKnown,
+            });
           }
           if (scan) return;
 
           for (const info of inject) {
             ensureParam(info.node);
             if (info.name) {
-              const brand = t.expressionStatement(
-                t.assignmentExpression(
-                  "=",
-                  t.memberExpression(t.identifier(info.name), t.identifier("__vbctx")),
-                  t.numericLiteral(1),
+              const marks = [
+                t.expressionStatement(
+                  t.assignmentExpression(
+                    "=",
+                    t.memberExpression(t.identifier(info.name), t.identifier("__vbctx")),
+                    t.numericLiteral(1),
+                  ),
                 ),
-              );
+              ];
+              if (info.server) {
+                marks.push(
+                  t.expressionStatement(
+                    t.assignmentExpression(
+                      "=",
+                      t.memberExpression(t.identifier(info.name), t.identifier("__mode")),
+                      t.stringLiteral("server"),
+                    ),
+                  ),
+                  t.expressionStatement(
+                    t.assignmentExpression(
+                      "=",
+                      t.memberExpression(t.identifier(info.name), t.identifier("__key")),
+                      t.stringLiteral(hashKey(`${filename}:${info.name}`)),
+                    ),
+                  ),
+                );
+              }
               const stmt = info.path.getStatementParent();
-              if (stmt) stmt.insertAfter(brand);
+              if (stmt) stmt.insertAfter(marks);
             }
           }
 

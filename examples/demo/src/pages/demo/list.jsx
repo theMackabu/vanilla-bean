@@ -1,4 +1,4 @@
-import { Head, For, signal } from "vanilla-bean";
+import { Head, signal } from "vanilla-bean";
 import { Button } from "../../components/button";
 
 let nextId = 4;
@@ -25,13 +25,13 @@ export default function ListDemo() {
         <Button onClick={shuffle}>shuffle</Button>
         <Button onClick={removeFirst}>remove first</Button>
       </div>
-      <For each={items} key={(item) => item.id} as="ul">
-        {(item) => (
-          <li>
+      <ul>
+        {items.map((item) => (
+          <li key={item.id}>
             #{item.id} - {item.label}
           </li>
-        )}
-      </For>
+        ))}
+      </ul>
     </Fragment>
   );
 }

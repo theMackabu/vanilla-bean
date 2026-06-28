@@ -4,6 +4,9 @@ declare global {
     interface ElementChildrenAttribute {
       children: {};
     }
+    interface IntrinsicAttributes {
+      key?: unknown;
+    }
     interface IntrinsicElements {
       [el: string]: any;
     }

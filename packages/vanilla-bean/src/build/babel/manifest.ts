@@ -4,6 +4,7 @@ import path from "node:path";
 export type FileExports = {
   ctx: Set<string>;
   known: Set<string>;
+  actions: Set<string>;
   defaultCtx: boolean;
   defaultKnown: boolean;
 };
@@ -48,6 +49,10 @@ export function lookupExport(mode: string, absFile: string, name: string): "ctx"
   if (info.ctx.has(name)) return "ctx";
   if (info.known.has(name)) return "plain";
   return "unknown";
+}
+
+export function lookupAction(mode: string, absFile: string, name: string): boolean {
+  return store.get(keyOf(mode, absFile))?.actions.has(name) || false;
 }
 
 let scanner: ((absFile: string, mode: string) => void) | null = null;

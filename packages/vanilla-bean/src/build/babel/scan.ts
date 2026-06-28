@@ -3,6 +3,7 @@ import { transformSync } from "@babel/core";
 import jsxTransformPkg from "@babel/plugin-transform-react-jsx";
 import tsTransformPkg from "@babel/plugin-transform-typescript";
 import signals from "./signals.ts";
+import jsxMap from "./jsx-map.ts";
 import thunkPlugin from "./jsx-thunk.ts";
 import className from "./class-name.ts";
 import directives from "./directives.ts";
@@ -14,7 +15,13 @@ const jsxTransform = (jsxTransformPkg as any).default ?? jsxTransformPkg;
 const tsTransform = (tsTransformPkg as any).default ?? tsTransformPkg;
 
 const DIRECTIVE = /^\s*(?:\/\/[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*["']use (?:server|client|static)["']/;
-const EMPTY = { ctx: new Set<string>(), known: new Set<string>(), defaultCtx: false, defaultKnown: false };
+const EMPTY = {
+  ctx: new Set<string>(),
+  known: new Set<string>(),
+  actions: new Set<string>(),
+  defaultCtx: false,
+  defaultKnown: false,
+};
 
 function scanFile(absFile: string, mode: string): void {
   const code = fs.readFileSync(absFile, "utf8");
@@ -28,6 +35,7 @@ function scanFile(absFile: string, mode: string): void {
   const browser = mode === "b";
   const plugins: any[] = [
     signals,
+    jsxMap,
     thunkPlugin,
     className,
     [directives, { server: !browser, browser }],

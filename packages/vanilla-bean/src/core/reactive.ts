@@ -163,11 +163,12 @@ export async function settle(set: Set<Promise<unknown>>): Promise<boolean> {
 
 export function effect(fn: () => unknown): Effect;
 export function effect(ctx: Ctx, fn: () => unknown): Effect;
-export function effect(ctx: Ctx | (() => unknown), fn?: () => unknown): Effect {
-  if (typeof ctx === "function") {
+export function effect(ctxOrFn: Ctx | (() => unknown), fn?: () => unknown): Effect {
+  if (typeof ctxOrFn === "function") {
     throw new Error("[vanilla-bean] effect() must run inside a component so Vanilla Bean can provide render context");
   }
-  const run = fn!;
+  if (!fn) throw new Error("[vanilla-bean] effect() requires a callback");
+  const ctx = ctxOrFn;
   const parent = ctx.owner;
   const eff: Effect = {
     ctx,
@@ -175,7 +176,7 @@ export function effect(ctx: Ctx | (() => unknown), fn?: () => unknown): Effect {
     children: new Set(),
     cleanups: [],
     disposed: false,
-    asyncFn: isAsyncFn(run),
+    asyncFn: isAsyncFn(fn),
     execute() {
       if (eff.disposed) return;
       if (import.meta.env?.SSR && eff.asyncFn) {
@@ -190,7 +191,7 @@ export function effect(ctx: Ctx | (() => unknown), fn?: () => unknown): Effect {
       const b = ctx.boundary;
       let result: unknown;
       try {
-        result = run();
+        result = fn();
       } finally {
         ctx.listeners.pop();
         ctx.owner = prevOwner;

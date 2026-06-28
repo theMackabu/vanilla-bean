@@ -1,6 +1,6 @@
 import type { Ctx } from "./ctx.ts";
 
-type Effect = {
+export type Effect = {
   ctx: Ctx;
   deps: Set<Set<Effect>>;
   children: Set<Effect>;
@@ -161,7 +161,13 @@ export async function settle(set: Set<Promise<unknown>>): Promise<boolean> {
   return did;
 }
 
-export function effect(ctx: Ctx, fn: () => unknown): Effect {
+export function effect(fn: () => unknown): Effect;
+export function effect(ctx: Ctx, fn: () => unknown): Effect;
+export function effect(ctx: Ctx | (() => unknown), fn?: () => unknown): Effect {
+  if (typeof ctx === "function") {
+    throw new Error("[vanilla-bean] effect() must run inside a component so Vanilla Bean can provide render context");
+  }
+  const run = fn!;
   const parent = ctx.owner;
   const eff: Effect = {
     ctx,
@@ -169,7 +175,7 @@ export function effect(ctx: Ctx, fn: () => unknown): Effect {
     children: new Set(),
     cleanups: [],
     disposed: false,
-    asyncFn: isAsyncFn(fn),
+    asyncFn: isAsyncFn(run),
     execute() {
       if (eff.disposed) return;
       if (import.meta.env?.SSR && eff.asyncFn) {
@@ -184,7 +190,7 @@ export function effect(ctx: Ctx, fn: () => unknown): Effect {
       const b = ctx.boundary;
       let result: unknown;
       try {
-        result = fn();
+        result = run();
       } finally {
         ctx.listeners.pop();
         ctx.owner = prevOwner;
@@ -304,5 +310,3 @@ export function useTransition(ctx: Ctx): [boolean, (fn: () => unknown) => void] 
   const pending = makeSignal(false);
   return [pending as unknown as boolean, (fn: () => unknown) => startTransition(ctx, fn, pending)];
 }
-
-export type { Effect };

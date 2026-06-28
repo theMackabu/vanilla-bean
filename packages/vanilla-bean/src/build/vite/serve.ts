@@ -58,6 +58,12 @@ function withResHeaders(base: Record<string, string>, res: Headers | null): Head
   return h;
 }
 
+async function sendResponse(res: any, web: Response): Promise<void> {
+  res.statusCode = web.status;
+  web.headers.forEach((v: string, k: string) => res.setHeader(k, v));
+  res.end(Buffer.from(await web.arrayBuffer()));
+}
+
 async function readActionArgs(request: Request): Promise<unknown[] | undefined> {
   const ct = request.headers.get('content-type') || '';
   if (ct.includes('application/json')) {
@@ -127,9 +133,7 @@ export function devPlugin(ctx: Ctx): any {
             }
           }
 
-          res.statusCode = web.status;
-          web.headers.forEach((v: string, k: string) => res.setHeader(k, v));
-          res.end(Buffer.from(await web.arrayBuffer()));
+          await sendResponse(res, web);
         } catch (e) {
           next(e);
         }
@@ -145,9 +149,7 @@ export function devPlugin(ctx: Ctx): any {
               status: 404,
               headers: { 'content-type': 'application/json' }
             });
-          res.statusCode = web.status;
-          web.headers.forEach((v: string, k: string) => res.setHeader(k, v));
-          res.end(Buffer.from(await web.arrayBuffer()));
+          await sendResponse(res, web);
         } catch (e) {
           next(e);
         }
@@ -163,7 +165,20 @@ export function devPlugin(ctx: Ctx): any {
           fw.installTimerGuard?.('error');
           if (devTemplate === null) devTemplate = await resolveStatics(fw, buildShell(ctx.meta, { entry: ctx.devEntry }));
           const origin = 'http://' + (req.headers.host || 'localhost');
-          let html = await renderRouteToHTML(fw, devTemplate, url, { keepBody: true, origin });
+          let html: string;
+          try {
+            html = await renderRouteToHTML(fw, devTemplate, url, { keepBody: true, origin });
+          } catch (e: any) {
+            if (!fw.isRedirect?.(e)) throw e;
+            await sendResponse(
+              res,
+              new Response(null, {
+                status: e.redirect.status,
+                headers: { location: e.redirect.url }
+              })
+            );
+            return;
+          }
           html = html.replace('</head>', (await collectDevCss(server)) + '</head>');
           res.statusCode = 200;
           res.setHeader('Content-Type', 'text/html');

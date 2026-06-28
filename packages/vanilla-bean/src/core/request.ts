@@ -88,8 +88,13 @@ class RedirectError extends Error {
   }
 }
 
-export function redirect(ctx: Ctx, url: string, status = 302): never {
-  ctx.redirect = { url, status };
+export function redirect(url: string, status?: number): never;
+export function redirect(ctx: Ctx, url: string, status?: number): never;
+export function redirect(ctx: Ctx | string, url?: string | number, status = 302): never {
+  if (typeof ctx === "string") {
+    throw new RedirectError({ url: ctx, status: typeof url === "number" ? url : status });
+  }
+  ctx.redirect = { url: String(url), status };
   throw new RedirectError(ctx.redirect);
 }
 

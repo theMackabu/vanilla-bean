@@ -26,6 +26,7 @@ export default function ApiDemo() {
       <div class="flex flex-wrap gap-2">
         <Button onClick={() => call("/api/hello?name=Ada")}>GET /api/hello</Button>
         <Button onClick={() => call("/api/users/7")}>GET /api/users/7</Button>
+        <Button onClick={() => call("/api/status/418")}>GET /api/status/418</Button>
         <Button
           onClick={() =>
             call("/api/users/7", {

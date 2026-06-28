@@ -1,6 +1,6 @@
 # {{name}}
 
-Made with [vanilla bean](https://github.com/theMackabu/vanilla-bean) 🫘
+Made with [vanilla bean](https://github.com/theMackabu/vanilla-bean)
 
 ```bash
 ant install

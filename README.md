@@ -1,11 +1,11 @@
-# 🫘 vanilla bean
+# vanilla bean
 
 _Real DOM. Real signals. No virtual anything._
 
 vanilla bean is a JSX framework that compiles your components straight to **real DOM nodes** and wires them with **fine-grained signals**. There's no virtual DOM, no diffing, and no re-rendering, when a signal changes, only the one text node or attribute that read it updates.
 
 ```jsx
-import { signal } from "vanilla-bean";
+import { signal } from 'vanilla-bean';
 
 function Counter() {
   let count = signal(0);
@@ -79,8 +79,8 @@ ant add vanilla-bean
   "scripts": {
     "dev": "vanilla-bean dev",
     "build": "vanilla-bean build",
-    "start": "vanilla-bean start",
-  },
+    "start": "vanilla-bean start"
+  }
 }
 ```
 
@@ -88,7 +88,7 @@ Then drop a page in `src/pages/`:
 
 ```jsx
 // src/pages/index.jsx
-import { Head } from "vanilla-bean";
+import { Head } from 'vanilla-bean';
 
 export default () => (
   <Fragment>
@@ -117,7 +117,7 @@ count = 10; // write
 `effect()` re-runs when any signal it read changes. `derived()` is a cached computed value, read it by calling it:
 
 ```jsx
-import { signal, derived, effect } from "vanilla-bean";
+import { signal, derived, effect } from 'vanilla-bean';
 
 const count = signal(1); // read-only here → `const` is fine
 const doubled = derived(() => count * 2);
@@ -153,14 +153,14 @@ By default a component is **isomorphic**: server-rendered for the initial HTML, 
 // "use static" runs ONCE at build, the result is baked into the page,
 // and the client adopts it with no JS shipped for this component.
 async function loadUUID() {
-  "use static";
-  return (await fetch("https://httpbingo.org/uuid")).json();
+  'use static';
+  return (await fetch('https://httpbingo.org/uuid')).json();
 }
 
 // "use client" server emits a placeholder/fallback; the component
 // runs only in the browser.
 function Widget() {
-  "use client";
+  'use client';
   // ...browser-only code
 }
 
@@ -168,8 +168,8 @@ function Widget() {
 // server with the real fetch, streams in, and the client adopts it
 // statically. Zero JS shipped for this component.
 async function Origin() {
-  "use server";
-  const data = await (await fetch("https://httpbingo.org/get")).json();
+  'use server';
+  const data = await (await fetch('https://httpbingo.org/get')).json();
   return (
     <p>
       your origin: <code>{data.origin}</code>
@@ -183,7 +183,7 @@ async function Origin() {
 The same directives work as the **first line of a page file**, applying to the whole page, `"use static"` prerenders it at build, `"use client"` makes it client-only, `"use server"` server-renders it:
 
 ```jsx
-"use server"; // the whole page renders on the server; named exports become actions
+'use server'; // the whole page renders on the server; named exports become actions
 
 export default async function Page() {
   const data = await db.query(/* … */);
@@ -205,7 +205,7 @@ A file that starts with `"use server"` turns its exports into server functions y
 
 ```jsx
 // src/actions/demo.jsx
-"use server";
+'use server';
 
 let hits = 0; // shared across requests, on the server
 
@@ -216,7 +216,7 @@ export async function bump(by = 1) {
 ```
 
 ```jsx
-import { bump } from "../actions/demo";
+import { bump } from '../actions/demo';
 const res = await bump(2); // RPC to the server
 ```
 
@@ -227,29 +227,29 @@ const res = await bump(2); // RPC to the server
 Server components and server actions can read the incoming request **cookies, headers, method** and set response cookies/headers or redirect. Read it synchronously at the top (the server serializes renders, so the context is per-request).
 
 ```jsx
-import { cookies, redirect } from "vanilla-bean";
+import { cookies, redirect } from 'vanilla-bean';
 
 // an auth gate: a sync "use server" component → a real 302 on first load
 function Protected() {
-  "use server";
-  const user = cookies().get("session");
-  if (!user) redirect("/login");
+  'use server';
+  const user = cookies().get('session');
+  if (!user) redirect('/login');
   return <p>welcome, {user}</p>;
 }
 ```
 
 ```js
 // src/actions/auth.js
-"use server";
-import { cookies, redirect } from "vanilla-bean";
+'use server';
+import { cookies, redirect } from 'vanilla-bean';
 
 export async function login(name) {
-  cookies().set("session", name, { httpOnly: true, sameSite: "lax" });
-  redirect("/"); // from an action, the client navigates
+  cookies().set('session', name, { httpOnly: true, sameSite: 'lax' });
+  redirect('/'); // from an action, the client navigates
 }
 export async function logout() {
-  cookies().delete("session");
-  redirect("/login");
+  cookies().delete('session');
+  redirect('/login');
 }
 ```
 
@@ -265,7 +265,7 @@ Files under `src/api/` become HTTP endpoints. Export handlers by method:
 ```js
 // src/api/hello.js  →  GET /api/hello
 export function GET(request, { query }) {
-  return { hello: query.name ?? "world" };
+  return { hello: query.name ?? 'world' };
 }
 
 // src/api/users/[id].js  →  /api/users/:id
@@ -282,10 +282,10 @@ A `*.ws.js` file is a WebSocket endpoint:
 ```js
 // src/api/echo.ws.js  →  ws://…/api/echo
 export function open(ws) {
-  ws.send("connected");
+  ws.send('connected');
 }
 export function message(ws, data) {
-  ws.send("echo: " + data);
+  ws.send('echo: ' + data);
 }
 export function close() {}
 ```
@@ -322,12 +322,12 @@ Configure with `vanilla-bean.config.{ts,js,mjs}`:
 
 ```ts
 export default {
-  meta: { lang: "en", title: "my app", description: "…" },
+  meta: { lang: 'en', title: 'my app', description: '…' },
   vite: {
     plugins: [
       /* any vite plugins, e.g. tailwind */
-    ],
-  },
+    ]
+  }
 };
 ```
 

@@ -1,4 +1,4 @@
-import { signal } from "vanilla-bean";
+import { signal } from 'vanilla-bean';
 
 function Counter() {
   let count = signal(0);
@@ -7,7 +7,7 @@ function Counter() {
 
 export default () => (
   <Fragment>
-    <h1>hello, bean 🫘</h1>
+    <h1>hello from vanilla bean</h1>
     <Counter />
   </Fragment>
 );

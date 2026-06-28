@@ -3,6 +3,7 @@ import jsxTransformPkg from "@babel/plugin-transform-react-jsx";
 import tsTransformPkg from "@babel/plugin-transform-typescript";
 import signals from "../babel/signals.ts";
 import thunkPlugin from "../babel/jsx-thunk.ts";
+import className from "../babel/class-name.ts";
 import directives from "../babel/directives.ts";
 import autoJsxRuntime from "../babel/auto-runtime.ts";
 import ctxThread from "../babel/ctx.ts";
@@ -33,6 +34,7 @@ export function jsxPlugin(ctx: Ctx): any {
       const plugins: any[] = [
         signals,
         thunkPlugin,
+        className,
         [directives, { server: ctx.ssrBuild, browser }],
         [jsxTransform, { runtime: "classic", pragma: "h", pragmaFrag: "Fragment" }],
         [autoJsxRuntime, { source: "vanilla-bean" }],

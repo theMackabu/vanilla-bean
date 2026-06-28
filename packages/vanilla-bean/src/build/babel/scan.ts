@@ -4,6 +4,7 @@ import jsxTransformPkg from "@babel/plugin-transform-react-jsx";
 import tsTransformPkg from "@babel/plugin-transform-typescript";
 import signals from "./signals.ts";
 import thunkPlugin from "./jsx-thunk.ts";
+import className from "./class-name.ts";
 import directives from "./directives.ts";
 import autoJsxRuntime from "./auto-runtime.ts";
 import ctxThread from "./ctx.ts";
@@ -28,6 +29,7 @@ function scanFile(absFile: string, mode: string): void {
   const plugins: any[] = [
     signals,
     thunkPlugin,
+    className,
     [directives, { server: !browser, browser }],
     [jsxTransform, { runtime: "classic", pragma: "h", pragmaFrag: "Fragment" }],
     [autoJsxRuntime, { source: "vanilla-bean" }],

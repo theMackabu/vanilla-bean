@@ -1,133 +1,167 @@
 #!/usr/bin/env node
 
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import * as p from "@clack/prompts";
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+import * as p from '@clack/prompts';
+import { featureOptions, packageOptions } from './lib/addons.js';
+import { blue, yellow } from './lib/colors.js';
+import { formatPathForMessage, resolveProjectName, validateProjectPath } from './lib/paths.js';
+import { multiselect, select } from './lib/prompts.js';
+import { scaffold } from './lib/scaffold.js';
+import { fetchFrameworkVersion } from './lib/version.js';
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const templateDir = path.join(here, "template");
+export { featureOptions, packageOptions } from './lib/addons.js';
+export { formatPathForMessage, resolveProjectName, validateProjectPath } from './lib/paths.js';
+export { multiselect, select } from './lib/prompts.js';
+export { scaffold } from './lib/scaffold.js';
+export { fetchFrameworkVersion, latestVersion } from './lib/version.js';
 
-const tsOnly = new Set(["tsconfig.json", "src/app.d.ts"]);
-const tailwindOnly = new Set(["src/assets/index.css"]);
-const invalidProjectPath = "letters, numbers, dot, dash, underscore and slash only";
-
-function formatPathForMessage(dest) {
-  const rel = path.relative(process.cwd(), dest);
-  if (!rel) return ".";
-  return rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel : dest;
+function isEmptyDir(dir) {
+  return !fs.existsSync(dir) || fs.readdirSync(dir).length === 0;
 }
 
-function validateProjectPath(v) {
-  return v && /[^a-zA-Z0-9._/-]/.test(v) ? invalidProjectPath : undefined;
+function emptyDir(dir) {
+  if (!fs.existsSync(dir)) return;
+  for (const entry of fs.readdirSync(dir)) {
+    if (entry === '.git') continue;
+    fs.rmSync(path.join(dir, entry), { recursive: true, force: true });
+  }
 }
 
-function projectNameFromDest(dest) {
-  return path.basename(path.resolve(dest));
+function detectPackageManager() {
+  const agent = process.env.npm_config_user_agent?.split(' ')[0]?.split('/')[0];
+  if (['ant', 'bun', 'deno', 'npm', 'pnpm', 'yarn'].includes(agent)) return agent;
+  return 'npm';
 }
 
-export function resolveProjectName({ dest, name }) {
-  return name && name !== "." ? name : projectNameFromDest(dest);
+function installCommand(packageManager) {
+  if (packageManager === 'yarn') return ['yarn'];
+  return [packageManager, 'install'];
 }
 
-export function scaffold({ dest, name, ts, tailwind }) {
-  const projectName = resolveProjectName({ dest, name });
-  if (!projectName) throw new Error("project path must include a directory name");
+function devCommand(packageManager) {
+  switch (packageManager) {
+    case 'deno':
+      return ['deno', 'task', 'dev'];
+    case 'npm':
+      return ['npm', 'run', 'dev'];
+    default:
+      return [packageManager, 'dev'];
+  }
+}
 
-  const tokens = {
-    name: projectName,
-    x: ts ? "tsx" : "jsx",
-    configExt: ts ? "ts" : "js",
-    tw_import: tailwind ? 'import tailwindcss from "@tailwindcss/vite";\n\n' : "",
-    tw_plugin: tailwind ? "\n  vite: { plugins: [tailwindcss()] }," : "",
-    tw_css: tailwind ? 'import "./assets/index.css";\n' : "",
-    children_t: ts ? ": { children?: unknown }" : "",
-  };
-  const fill = (s) => s.replace(/{{(\w+)}}/g, (m, k) => (k in tokens ? tokens[k] : m));
+function runCommand(command, cwd) {
+  const [bin, ...args] = command;
+  const result = spawnSync(bin, args, { cwd, stdio: 'inherit' });
+  if (result.error) throw result.error;
+  if (result.status) process.exit(result.status);
+}
 
-  const rename = (rel) => {
-    let out = rel === "_gitignore" ? ".gitignore" : rel;
-    if (out.endsWith(".jsx")) out = out.slice(0, -4) + (ts ? ".tsx" : ".jsx");
-    else if (out.endsWith(".js")) out = out.slice(0, -3) + (ts ? ".ts" : ".js");
-    return out;
-  };
+function shellCommand(command) {
+  return command.join(' ');
+}
 
-  const walk = (dir) => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const abs = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        walk(abs);
-        continue;
-      }
-      const rel = path.relative(templateDir, abs).split(path.sep).join("/");
-      if (!ts && tsOnly.has(rel)) continue;
-      if (!tailwind && tailwindOnly.has(rel)) continue;
+function cdCommand(dest) {
+  const rel = formatPathForMessage(dest);
+  if (rel === '.') return null;
+  return `cd ${rel.includes(' ') ? JSON.stringify(rel) : rel}`;
+}
 
-      const outAbs = path.join(dest, rename(rel));
-      fs.mkdirSync(path.dirname(outAbs), { recursive: true });
-
-      if (rel === "package.json") {
-        const pkg = JSON.parse(fs.readFileSync(abs, "utf8"));
-        pkg.name = projectName;
-        if (ts) pkg.scripts.typecheck = "tsc --noEmit";
-        const dev = {
-          ...(tailwind ? { "@tailwindcss/vite": "^4.0.0" } : {}),
-          ...(ts ? { typescript: "^5.7.0" } : {}),
-        };
-        if (Object.keys(dev).length) pkg.devDependencies = dev;
-        fs.writeFileSync(outAbs, JSON.stringify(pkg, null, 2) + "\n");
-      } else {
-        fs.writeFileSync(outAbs, fill(fs.readFileSync(abs, "utf8")));
-      }
-    }
-  };
-
-  walk(templateDir);
-  return dest;
+function nextSteps(dest, packageManager) {
+  return [cdCommand(dest), shellCommand(installCommand(packageManager)), shellCommand(devCommand(packageManager))]
+    .filter(Boolean)
+    .map(command => `  ${command}`)
+    .join('\n');
 }
 
 async function main() {
-  p.intro("🫘 create vanilla bean");
   const projectPathArg = process.argv[2];
 
   const projectPath =
     projectPathArg ??
     (await p.text({
-      message: "Project path? (type . for current directory)",
-      placeholder: "my-vanilla-bean-app",
-      defaultValue: "my-vanilla-bean-app",
-      validate: validateProjectPath,
+      message: 'Project name:',
+      placeholder: 'vanilla-bean-project',
+      defaultValue: 'vanilla-bean-project',
+      validate: validateProjectPath
     }));
 
-  if (p.isCancel(projectPath)) return p.cancel("cancelled");
+  if (p.isCancel(projectPath)) return p.cancel('cancelled');
   const projectPathError = validateProjectPath(projectPath);
   if (projectPathError) return p.cancel(projectPathError);
 
   const dest = path.resolve(process.cwd(), projectPath);
   const name = resolveProjectName({ dest });
-  if (!name) return p.cancel("project path must include a directory name");
+  if (!name) return p.cancel('project path must include a directory name');
 
-  const lang = await p.select({
-    message: "Language?",
-    options: [
-      { value: "ts", label: "TypeScript" },
-      { value: "js", label: "JavaScript" },
-    ],
-  });
-
-  if (p.isCancel(lang)) return p.cancel("cancelled");
-  const tailwind = await p.confirm({ message: "Add Tailwind CSS?", initialValue: true });
-  if (p.isCancel(tailwind)) return p.cancel("cancelled");
-
-  if (fs.existsSync(dest) && fs.readdirSync(dest).length) {
-    return p.cancel(`${formatPathForMessage(dest)} already exists and is not empty`);
+  if (!isEmptyDir(dest)) {
+    const action = await select({
+      message:
+        dest === process.cwd()
+          ? 'Current directory is not empty. Please choose how to proceed:'
+          : `Target directory "${formatPathForMessage(dest)}" is not empty. Please choose how to proceed:`,
+      options: [
+        { value: 'cancel', label: 'Cancel operation' },
+        { value: 'remove', label: 'Remove existing files and continue' },
+        { value: 'ignore', label: 'Ignore files and continue' }
+      ]
+    });
+    if (p.isCancel(action) || action === 'cancel') return p.cancel('cancelled');
+    if (action === 'remove') emptyDir(dest);
   }
 
-  scaffold({ dest, name, ts: lang === "ts", tailwind });
-  const cd = formatPathForMessage(dest);
+  const lang = await select({
+    message: 'Language?',
+    options: [
+      { value: 'ts', label: blue('TypeScript') },
+      { value: 'js', label: yellow('JavaScript') }
+    ]
+  });
 
-  p.note(`${cd === "." ? "" : `cd ${cd}\n`}ant install\nant dev`, "next steps");
-  p.outro("happy hacking 🫘");
+  if (p.isCancel(lang)) return p.cancel('cancelled');
+  const packages = await multiselect({
+    message: 'Select packages:',
+    options: packageOptions,
+    initialValues: ['tailwind'],
+    required: false
+  });
+  if (p.isCancel(packages)) return p.cancel('cancelled');
+  const features = await multiselect({
+    message: 'Select features:',
+    options: featureOptions,
+    initialValues: ['path-alias'],
+    required: false
+  });
+  if (p.isCancel(features)) return p.cancel('cancelled');
+
+  const packageManager = detectPackageManager();
+  const installAndStart = await p.confirm({
+    message: `Install with ${packageManager} and start now?`,
+    initialValue: false
+  });
+  if (p.isCancel(installAndStart)) return p.cancel('cancelled');
+
+  let vanillaBeanVersion;
+  try {
+    vanillaBeanVersion = await fetchFrameworkVersion();
+  } catch (e) {
+    return p.cancel(`could not resolve latest vanilla-bean version: ${e.message}`);
+  }
+
+  p.log.step(`Scaffolding project in ${dest}...`);
+  scaffold({ dest, name, ts: lang === 'ts', packages, features, vanillaBeanVersion });
+
+  if (installAndStart) {
+    p.log.step(`Installing dependencies with ${packageManager}...`);
+    runCommand(installCommand(packageManager), dest);
+    p.log.step('Starting dev server...');
+    runCommand(devCommand(packageManager), dest);
+    return;
+  }
+
+  p.outro(`Done. Now run:\n\n${nextSteps(dest, packageManager)}`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

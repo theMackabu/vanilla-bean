@@ -8,7 +8,7 @@
     "skipLibCheck": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
-    "types": ["vanilla-bean"]
+    "types": ["vanilla-bean"]{{ts_alias}}
   },
   "include": ["src"]
 }

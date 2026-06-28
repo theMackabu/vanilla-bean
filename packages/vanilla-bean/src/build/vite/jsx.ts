@@ -35,7 +35,7 @@ export function jsxPlugin(ctx: Ctx): any {
         signals,
         thunkPlugin,
         className,
-        [directives, { server: ctx.ssrBuild, browser }],
+        [directives, { server: !browser, browser }],
         [jsxTransform, { runtime: "classic", pragma: "h", pragmaFrag: "Fragment" }],
         [autoJsxRuntime, { source: "vanilla-bean" }],
         [ctxThread, { mode: browser ? "b" : "s" }],

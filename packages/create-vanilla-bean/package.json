@@ -1,6 +1,6 @@
 {
   "name": "create-vanilla-bean",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Scaffold a new vanilla bean app.",
   "license": "MIT",
@@ -10,10 +10,12 @@
   },
   "homepage": "https://vanilla.cafe",
   "bin": {
-    "create-vanilla-bean": "index.js"
+    "create-vanilla-bean": "cli.js"
   },
+  "exports": "./index.js",
   "files": [
     "addons",
+    "cli.js",
     "index.js",
     "lib",
     "template"
